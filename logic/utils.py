@@ -7,12 +7,36 @@ from typing import Tuple, Optional
 import json
 import pytz
 from openai import AzureOpenAI
+import os  # Ensure os is imported here too for getenv
 
 # ---------- CONFIGURATION ----------
-AZURE_OPENAI_ENDPOINT = "https://azure-md46msq5-swedencentral.openai.azure.com/"
-AZURE_OPENAI_KEY = "4V95tcXbVO3y2uyhKiAISmxC9ALiUaKvofpcEgNCoYWlBPvAatWcJQQJ99BGACfhMk5XJ3w3AAAAACOGPrhY"
+AZURE_OPENAI_KEY = os.getenv("AZURE_OPENAI_KEY")
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_DEPLOYMENT = "gpt-35-turbo"
 AZURE_OPENAI_API_VERSION = "2025-01-01-preview"
+
+# --- DEBUGGING PRINTS ---
+print(
+    f"DEBUG: logic/utils.py - AZURE_OPENAI_KEY (first 5 chars): {AZURE_OPENAI_KEY[:5] if AZURE_OPENAI_KEY else 'None'}")
+print(f"DEBUG: logic/utils.py - AZURE_OPENAI_ENDPOINT (RAW from env): '{AZURE_OPENAI_ENDPOINT}'")
+# --- END DEBUGGING PRINTS ---
+
+# ---------- GLOBAL AZURE OPENAI CLIENT INITIALIZATION ----------
+# Initialize client globally, only if environment variables are available
+utils_openai_client = None
+try:
+    if AZURE_OPENAI_KEY and AZURE_OPENAI_ENDPOINT:
+        utils_openai_client = AzureOpenAI(
+            api_key=AZURE_OPENAI_KEY,
+            api_version=AZURE_OPENAI_API_VERSION,
+            azure_endpoint=AZURE_OPENAI_ENDPOINT
+        )
+        print("DEBUG: utils.py - Azure OpenAI client initialized.")
+    else:
+        print("WARNING: utils.py - Azure OpenAI client not initialized due to missing environment variables.")
+except Exception as e:
+    print(f"CRITICAL ERROR: utils.py - Failed to initialize Azure OpenAI client: {e}")
+    utils_openai_client = None
 
 # Column alias mapping
 column_mapping = {
@@ -51,20 +75,18 @@ Rules:
 5. If no date filter, set date_filter=false and return null for dates
 """
     try:
-        client = AzureOpenAI(
-            api_key=AZURE_OPENAI_KEY,
-            api_version=AZURE_OPENAI_API_VERSION,
-            azure_endpoint=AZURE_OPENAI_ENDPOINT
-        )
-
-        response = client.chat.completions.create(
-            model=AZURE_OPENAI_DEPLOYMENT,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": query}
-            ],
-            temperature=0
-        )
+        if utils_openai_client:  # Use the globally initialized client
+            response = utils_openai_client.chat.completions.create(
+                model=AZURE_OPENAI_DEPLOYMENT,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": query}
+                ],
+                temperature=0
+            )
+        else:
+            print("ERROR: utils.py - Azure OpenAI client is not available for parse_date_range_from_query_llm.")
+            return {"date_filter": False, "start_date": None, "end_date": None, "description": "all available data"}
 
         result = json.loads(response.choices[0].message.content)
 
@@ -125,20 +147,23 @@ def get_cm_query_details(prompt):
     """
 
     try:
-        client = AzureOpenAI(
-            api_key=AZURE_OPENAI_KEY,
-            api_version=AZURE_OPENAI_API_VERSION,
-            azure_endpoint=AZURE_OPENAI_ENDPOINT
-        )
-
-        response = client.chat.completions.create(
-            model=AZURE_OPENAI_DEPLOYMENT,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0
-        )
+        if utils_openai_client:  # Use the globally initialized client
+            response = utils_openai_client.chat.completions.create(
+                model=AZURE_OPENAI_DEPLOYMENT,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0
+            )
+        else:
+            print("ERROR: utils.py - Azure OpenAI client is not available for get_cm_query_details.")
+            return {
+                "type": "none",
+                "lower": None,
+                "upper": None,
+                **date_info
+            }
 
         # Use regex to safely extract JSON from the response
         json_str_match = re.search(r"\{.*\}", response.choices[0].message.content, re.DOTALL)
@@ -194,20 +219,23 @@ Rules for month_of_interest:
 4. If no specific month is mentioned but "last month" is implied by context (e.g., "cost drop in Transportation"), default to "last month".
 """
     try:
-        client = AzureOpenAI(
-            api_key=AZURE_OPENAI_KEY,
-            api_version=AZURE_OPENAI_API_VERSION,
-            azure_endpoint=AZURE_OPENAI_ENDPOINT
-        )
-
-        response = client.chat.completions.create(
-            model=AZURE_OPENAI_DEPLOYMENT,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0
-        )
+        if utils_openai_client:  # Use the globally initialized client
+            response = utils_openai_client.chat.completions.create(
+                model=AZURE_OPENAI_DEPLOYMENT,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0
+            )
+        else:
+            print("ERROR: utils.py - Azure OpenAI client is not available for get_cost_drop_query_details.")
+            return {
+                "segment": None,
+                "month_of_interest_start": last_month_start.strftime('%Y-%m-%d'),
+                "month_of_interest_end": last_month_end.strftime('%Y-%m-%d'),
+                "compare_to_previous_month": True
+            }
 
         json_str_match = re.search(r"\{.*\}", response.choices[0].message.content, re.DOTALL)
         if json_str_match:

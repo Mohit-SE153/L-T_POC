@@ -1,12 +1,24 @@
-from openai import AzureOpenAI
 import os
+from openai import AzureOpenAI
 
-# Initialize the client (example: Azure)
-# IMPORTANT: Replace with your actual Azure OpenAI key and endpoint if different.
-AZURE_OPENAI_KEY = "4V95tcXbVO3y2uyhKiAISmxC9ALiUaKvofpcEgNCoYWlBPvAatWcJQQJ99BGACfhMk5XJ3w3AAAAACOGPrhY" # Ensure this is your actual, full API key
-AZURE_OPENAI_ENDPOINT = "https://azure-md46msq5-swedencentral.openai.azure.com/" # Your actual, working endpoint
+# ---------- CONFIGURATION ----------
+# IMPORTANT: Read API key and endpoint from environment variables for deployment.
+# Set these as secrets in your Streamlit Community Cloud deployment settings.
+AZURE_OPENAI_KEY = os.getenv("AZURE_OPENAI_KEY")
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_DEPLOYMENT = "gpt-35-turbo" # Ensure this deployment name is correct
 AZURE_OPENAI_API_VERSION = "2025-01-01-preview"
+
+# --- DEBUGGING PRINTS ---
+print(f"DEBUG: questions.py - AZURE_OPENAI_KEY (first 5 chars): {AZURE_OPENAI_KEY[:5] if AZURE_OPENAI_KEY else 'None'}")
+print(f"DEBUG: questions.py - AZURE_OPENAI_ENDPOINT (RAW from env): '{AZURE_OPENAI_ENDPOINT}'")
+# --- END DEBUGGING PRINTS ---
+
+# Check if environment variables are set
+if not AZURE_OPENAI_KEY or not AZURE_OPENAI_ENDPOINT:
+    print("WARNING: AZURE_OPENAI_KEY or AZURE_OPENAI_ENDPOINT environment variables are not set.")
+    print("Please set them as Streamlit secrets for deployment, or as local environment variables in your .env file for local testing.")
+    raise ValueError("API keys for Azure OpenAI are not configured as environment variables.")
 
 # Add a try-except block around client initialization for better error reporting
 try:

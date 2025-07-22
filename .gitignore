@@ -1,0 +1,20 @@
+# Python specific ignores
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env           # <-- IMPORTANT: Ignores your .env file
+venv_cm_app/   # <-- CORRECTED: Matches your virtual environment folder name
+.Python/
+.ipynb_checkpoints/ # If you use Jupyter notebooks
+.idea/         # For PyCharm/IntelliJ users
+
+# Data ignores (if your data files are not meant for Git)
+*.csv          # This will ignore P&L data.csv, which is good if it's from Azure
+*.xlsx
+*.json         # Be careful if you have config JSONs you do want to track
+data/          # If you have a folder named 'data' that holds large/local files
+
+# OS generated files
+.DS_Store      # macOS
+Thumbs.db      # Windows

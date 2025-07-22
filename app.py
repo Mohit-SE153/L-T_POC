@@ -1,10 +1,16 @@
+from dotenv import load_dotenv
+
+load_dotenv()  # Load environment variables from .env file
+
 import streamlit as st
 import pandas as pd
 import os
 import pytz
 import plotly.express as px
 import numpy as np
-from datetime import datetime, timedelta  # Ensure timedelta is also imported for date calculations
+from datetime import datetime, timedelta
+from azure.storage.blob import BlobServiceClient  # New import for Azure Blob Storage
+import io  # New import for in-memory file handling
 
 # Import the question routing function
 from questions import get_question_id
@@ -12,8 +18,8 @@ from questions import get_question_id
 # Import the utility functions and the specific question logic
 from logic.utils import get_cm_query_details, get_cost_drop_query_details, parse_query_filters, REVENUE_GROUPS, \
     COST_GROUPS
-from logic.question_1 import run_logic as run_question_1_logic  # Alias for question_1 logic
-from logic.question_2 import run_logic as run_question_2_logic  # Alias for question_2 logic
+from logic.question_1 import run_logic as run_question_1_logic
+from logic.question_2 import run_logic as run_question_2_logic
 
 # Check for Plotly availability for visualizations
 try:
@@ -24,26 +30,77 @@ except ImportError:
     PLOTLY_AVAILABLE = False
     st.warning("Visualizations disabled - Plotly not installed. Install with: pip install plotly")
 
-# --- CONFIGURATION ---
-# IMPORTANT: Update this path to your actual Excel file location
-LOCAL_FILE_PATH = r"D:\L&T POC\OPS MIS_BRD 3_V1.1.xlsx"
-SHEET_NAME = "P&L"
+# --- CONFIGURATION FOR AZURE STORAGE ---
+# Get Azure Storage credentials from environment variables
+AZURE_STORAGE_ACCOUNT_NAME = os.getenv("AZURE_STORAGE_ACCOUNT_NAME")
+AZURE_STORAGE_ACCOUNT_KEY = os.getenv("AZURE_STORAGE_ACCOUNT_KEY")  # This is a secret!
+AZURE_STORAGE_CONTAINER_NAME = os.getenv("AZURE_STORAGE_CONTAINER_NAME")
+AZURE_STORAGE_BLOB_NAME = os.getenv("AZURE_STORAGE_BLOB_NAME")  # Your CSV file name
+
+# --- DEBUGGING PRINTS FOR AZURE STORAGE ---
+print(f"DEBUG: app.py - AZURE_STORAGE_ACCOUNT_NAME: '{AZURE_STORAGE_ACCOUNT_NAME}'")
+print(
+    f"DEBUG: app.py - AZURE_STORAGE_ACCOUNT_KEY (first 5 chars): '{AZURE_STORAGE_ACCOUNT_KEY[:5] if AZURE_STORAGE_ACCOUNT_KEY else 'None'}'")
+print(f"DEBUG: app.py - AZURE_STORAGE_CONTAINER_NAME: '{AZURE_STORAGE_CONTAINER_NAME}'")
+print(f"DEBUG: app.py - AZURE_STORAGE_BLOB_NAME: '{AZURE_STORAGE_BLOB_NAME}'")
+# --- END DEBUGGING PRINTS ---
+
+# Construct the connection string
+AZURE_STORAGE_CONNECTION_STRING = (
+    f"DefaultEndpointsProtocol=https;"
+    f"AccountName={AZURE_STORAGE_ACCOUNT_NAME};"
+    f"AccountKey={AZURE_STORAGE_ACCOUNT_KEY};"
+    f"EndpointSuffix=core.windows.net"
+)
 
 
-# --- DATA LOADING ---
+# --- DATA LOADING (MODIFIED FOR AZURE BLOB STORAGE) ---
 @st.cache_data
-def load_data(path, sheet_name):
+def load_data_from_azure(container_name, blob_name):
     """
-    Loads data from the specified Excel file and performs initial cleaning and formatting.
+    Loads data from Azure Blob Storage.
     Caches the data for performance.
     """
-    df = pd.read_excel(path, sheet_name=sheet_name)
-    df = df.drop_duplicates()
-    df["Amount in INR"] = df["Amount in INR"].round(2)
-    df["Amount in USD"] = df["Amount in USD"].round(2)
-    # Ensure 'Month' is datetime. The format infer_datetime_format=True helps.
-    df["Month"] = pd.to_datetime(df["Month"], errors='coerce', dayfirst=True, infer_datetime_format=True)
-    return df
+    if not AZURE_STORAGE_ACCOUNT_NAME or not AZURE_STORAGE_ACCOUNT_KEY or not container_name or not blob_name:
+        st.error("Azure Storage credentials or blob details are missing. Please set environment variables.")
+        return pd.DataFrame({"Message": ["Azure Storage configuration error."]})
+
+    try:
+        # Create the BlobServiceClient object
+        blob_service_client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
+
+        # Get a client to interact with the specific container
+        container_client = blob_service_client.get_container_client(container_name)
+
+        # Get a client to interact with the specific blob (your CSV file)
+        blob_client = container_client.get_blob_client(blob_name)
+
+        # Download blob content into a BytesIO object
+        download_stream = blob_client.download_blob()
+        csv_data = io.BytesIO(download_stream.readall())
+
+        # --- DEBUGGING PRINT: Print the first few bytes of the downloaded data ---
+        csv_data.seek(0)  # Go to the beginning of the BytesIO object
+        print(f"DEBUG: First 500 bytes of downloaded CSV data:\n{csv_data.read(500).decode('utf-8', errors='ignore')}")
+        csv_data.seek(0)  # Reset pointer to the beginning for pandas to read
+        # --- END DEBUGGING PRINT ---
+
+        # Read the CSV file from the in-memory stream, explicitly specifying the delimiter
+        df = pd.read_csv(csv_data, delimiter=',')
+
+        df = df.drop_duplicates()
+        df["Amount in INR"] = df["Amount in INR"].round(2)
+        df["Amount in USD"] = df["Amount in USD"].round(2)
+        # Assuming 'Month' column might be in various date formats, 'dayfirst=True' and 'infer_datetime_format=True'
+        # are good for robustness.
+        df["Month"] = pd.to_datetime(df["Month"], errors='coerce', dayfirst=True, infer_datetime_format=True)
+        return df
+
+    except Exception as e:
+        st.error(f"Error loading data from Azure Storage: {e}")
+        st.info("Please check your Azure Storage Account Name, Key, Container Name, and Blob Name.")
+        st.info(f"Also ensure the blob '{blob_name}' is a valid CSV file.")  # Added specific CSV hint
+        return pd.DataFrame({"Message": [f"Failed to load data from Azure Storage: {e}"]})
 
 
 # --- MAIN STREAMLIT APP LAYOUT ---
@@ -51,8 +108,14 @@ def main():
     st.set_page_config(layout="wide", page_title="CM Analyzer Pro", page_icon="📊")
     st.title("📊 Contribution Margin Analyzer")
 
-    # Load the data
-    df = load_data(LOCAL_FILE_PATH, SHEET_NAME)
+    # Load the data from Azure Storage
+    df = load_data_from_azure(AZURE_STORAGE_CONTAINER_NAME, AZURE_STORAGE_BLOB_NAME)
+
+    # Check if data loading failed and display message if so
+    if "Message" in df.columns and df["Message"].iloc[0].startswith("Azure Storage configuration error."):
+        st.stop()  # Stop the app execution if data loading failed
+    elif "Message" in df.columns and df["Message"].iloc[0].startswith("Failed to load data from Azure Storage:"):
+        st.stop()  # Stop the app execution if data loading failed
 
     # Custom CSS for styling (copied from original L&T POC.py)
     st.markdown("""
@@ -366,4 +429,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
