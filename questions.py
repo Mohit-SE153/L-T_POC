@@ -5,7 +5,10 @@ from openai import AzureOpenAI
 # IMPORTANT: Read API key and endpoint from environment variables for deployment.
 # Set these as secrets in your Streamlit Community Cloud deployment settings.
 AZURE_OPENAI_KEY = os.getenv("AZURE_OPENAI_KEY")
-AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
+# Get raw endpoint, then strip if it's not None
+raw_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+AZURE_OPENAI_ENDPOINT = raw_endpoint.strip() if raw_endpoint else None
+
 AZURE_OPENAI_DEPLOYMENT = "gpt-35-turbo" # Ensure this deployment name is correct
 AZURE_OPENAI_API_VERSION = "2025-01-01-preview"
 
@@ -92,4 +95,3 @@ If the input doesn’t match any known type, return 'unknown'.
     except Exception as e:
         print(f"Error in get_question_id API call: {e}")
         return "unknown"
-
