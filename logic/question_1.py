@@ -1,38 +1,32 @@
 import pandas as pd
-from logic.utils import calculate_cm
+from datetime import datetime, timedelta
+import pytz
+from logic.utils import calculate_cm  # Ensure calculate_cm is imported
 
 
-def run_logic(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
+def run_logic(df: pd.DataFrame, cm_filters: dict) -> pd.DataFrame:
     """
-    Logic to retrieve customers with CM% based on specified thresholds and date filters.
-    This function prepares the data for display and visualization in the main app.
+    Processes queries related to Contribution Margin (CM) analysis for customers.
+    Applies date and CM filters, then calculates and returns CM details.
     """
-    filtered_df_by_date = df.copy()
+    # Ensure 'Month' column is datetime
+    # Removed infer_datetime_format as it's deprecated and a strict version is now default
+    df["Month"] = pd.to_datetime(df["Month"], errors='coerce', dayfirst=True)
+    df.dropna(subset=['Month'], inplace=True)  # Drop rows where Month could not be parsed
 
-    # Apply date filtering if specified
-    if filters.get("date_filter") and filters.get("start_date") and filters.get("end_date"):
-        # Ensure 'Month' column is datetime
-        # This conversion should ideally happen once during data loading in app.py,
-        # but kept here for robustness in case df is passed without it.
-        filtered_df_by_date["Month"] = pd.to_datetime(filtered_df_by_date["Month"], errors='coerce', dayfirst=True,
-                                                      infer_datetime_format=True)
+    # Apply date filter if present
+    if cm_filters.get("date_filter") and cm_filters.get("start_date") and cm_filters.get("end_date"):
+        start_date = cm_filters["start_date"]
+        end_date = cm_filters["end_date"]
+        df = df[
+            (df["Month"].dt.date >= start_date) &
+            (df["Month"].dt.date <= end_date)
+            ].copy()  # Use .copy() to avoid SettingWithCopyWarning
 
-        filtered_df_by_date = filtered_df_by_date.dropna(subset=['Month'])  # Drop rows where month parsing failed
+        if df.empty:
+            return pd.DataFrame({"Message": ["No data found for the specified date range."]})
 
-        filtered_df_by_date = filtered_df_by_date[
-            (filtered_df_by_date["Month"].dt.date >= filters["start_date"]) &
-            (filtered_df_by_date["Month"].dt.date <= filters["end_date"])
-            ]
-        if filtered_df_by_date.empty:
-            # Return a DataFrame with a message if no data for the date range
-            return pd.DataFrame({"Message": [
-                f"No data available for the date range: {filters['start_date'].strftime('%Y-%m-%d')} to {filters['end_date'].strftime('%Y-%m-%d')}"]})
-
-    # Calculate CM and apply CM filters using the updated calculate_cm from utils
-    result_df = calculate_cm(filtered_df_by_date, filters)
-
-    if result_df.empty:
-        # Return a DataFrame with a message if no customers match CM criteria
-        return pd.DataFrame({"Message": ["No customers found matching the specified CM criteria."]})
+    # Calculate CM and apply CM filters
+    result_df = calculate_cm(df, cm_filters)
 
     return result_df

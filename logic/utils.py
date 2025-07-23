@@ -12,15 +12,41 @@ import os  # Ensure os is imported here too for getenv
 # ---------- CONFIGURATION ----------
 # IMPORTANT: Read API key and endpoint from environment variables for deployment.
 AZURE_OPENAI_KEY = os.getenv("AZURE_OPENAI_KEY")
-AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
+# Get raw endpoint, then strip if it's not None
+raw_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+AZURE_OPENAI_ENDPOINT = raw_endpoint.strip() if raw_endpoint else None
+
 AZURE_OPENAI_DEPLOYMENT = "gpt-35-turbo"
 AZURE_OPENAI_API_VERSION = "2025-01-01-preview"
 
-# --- DEBUGGING PRINTS ---
+# --- DEBUGGING PRINTS (for local testing) ---
 print(
     f"DEBUG: logic/utils.py - AZURE_OPENAI_KEY (first 5 chars): {AZURE_OPENAI_KEY[:5] if AZURE_OPENAI_KEY else 'None'}")
-print(f"DEBUG: logic/utils.py - AZURE_OPENAI_ENDPOINT: {AZURE_OPENAI_ENDPOINT}")
+print(f"DEBUG: logic/utils.py - AZURE_OPENAI_ENDPOINT: '{AZURE_OPENAI_ENDPOINT}'")
 # --- END DEBUGGING PRINTS ---
+
+# ---------- GLOBAL AZURE OPENAI CLIENT INITIALIZATION ----------
+# Initialize client globally, only if environment variables are available
+utils_openai_client = None
+try:
+    if AZURE_OPENAI_KEY and AZURE_OPENAI_ENDPOINT:
+        utils_openai_client = AzureOpenAI(
+            api_key=AZURE_OPENAI_KEY,
+            api_version=AZURE_OPENAI_API_VERSION,
+            azure_endpoint=AZURE_OPENAI_ENDPOINT
+        )
+        # Optional: A small test call to verify connectivity
+        # test_response = utils_openai_client.chat.completions.create(
+        #     model=AZURE_OPENAI_DEPLOYMENT,
+        #     messages=[{"role": "user", "content": "Test connection"}],
+        #     max_tokens=5
+        # )
+        # print("DEBUG: utils.py - Azure OpenAI client initialized and tested successfully.")
+    else:
+        print("WARNING: utils.py - Azure OpenAI client not initialized due to missing environment variables.")
+except Exception as e:
+    print(f"CRITICAL ERROR: utils.py - Failed to initialize Azure OpenAI client: {e}")
+    utils_openai_client = None  # Ensure client is None if initialization fails
 
 # Column alias mapping
 column_mapping = {
@@ -52,40 +78,42 @@ Return a JSON object with:
 - 'description': natural language description of the period
 
 Rules:
-1. For relative periods (like "last month"), calculate exact dates based on today's date
-2. For absolute periods (like "January 2023"), use exact dates
-3. For ranges (like "from March to May 2023"), use exact start/end dates
-4. For quarters, use exact quarter boundaries (e.g., Q1 = Jan 1 to Mar 31)
-5. If no date filter, set date_filter=false and return null for dates
+1. For relative periods (like "last month", "previous month", "last quarter"), calculate exact dates based on today's date.
+2. For absolute periods (like "January 2023"), use exact dates.
+3. For ranges (like "from March to May 2023"), use exact start/end dates.
+4. For quarters, use exact quarter boundaries (e.g., Q1 = Jan 1 to Mar 31).
+5. If no date filter, set date_filter=false and return null for dates.
+6. Ensure the JSON output is perfectly valid, with no trailing commas.
 """
     try:
-        # Only attempt to initialize client if keys are available
-        if AZURE_OPENAI_KEY and AZURE_OPENAI_ENDPOINT:
-            client = AzureOpenAI(
-                api_key=AZURE_OPENAI_KEY,
-                api_version=AZURE_OPENAI_API_VERSION,
-                azure_endpoint=AZURE_OPENAI_ENDPOINT
+        # Use the globally initialized client
+        if utils_openai_client:
+            response = utils_openai_client.chat.completions.create(
+                model=AZURE_OPENAI_DEPLOYMENT,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": query}
+                ],
+                temperature=0
             )
+            llm_response_content = response.choices[0].message.content.strip()
+            print(f"DEBUG: LLM response for date parsing: '{llm_response_content}'")  # Debug print for LLM response
         else:
-            print("Azure OpenAI client not initialized in utils.py due to missing environment variables.")
+            print("ERROR: utils.py - Azure OpenAI client is not available for parse_date_range_from_query_llm.")
             return {"date_filter": False, "start_date": None, "end_date": None, "description": "all available data"}
 
-        response = client.chat.completions.create(
-            model=AZURE_OPENAI_DEPLOYMENT,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": query}
-            ],
-            temperature=0
-        )
-
-        llm_response_content = response.choices[0].message.content.strip()
-        print(f"DEBUG: LLM response for date parsing: '{llm_response_content}'")  # Debug print for LLM response
-
-        result = json.loads(llm_response_content)
+        # Safely extract and parse JSON using regex to handle potential extra text/trailing commas
+        json_str_match = re.search(r"\{.*\}", llm_response_content, re.DOTALL)
+        if json_str_match:
+            json_str = json_str_match.group()
+            result = json.loads(json_str)
+        else:
+            print(f"WARNING: No valid JSON found in LLM date parsing response: '{llm_response_content}'")
+            return {"date_filter": False, "start_date": None, "end_date": None, "description": "all available data"}
 
         if result.get("date_filter"):
             try:
+                # Ensure start_date and end_date are not None before parsing
                 start_date = parser.parse(result["start_date"]).date() if result.get("start_date") else None
                 end_date = parser.parse(result["end_date"]).date() if result.get("end_date") else None
                 result["start_date"] = start_date
@@ -102,7 +130,7 @@ Rules:
         print(f"DEBUG: Final parsed date info: {result}")  # Debug print for final parsed dates
         return result
     except Exception as e:
-        print(f"Error parsing date range with LLM: {e}")
+        print(f"Error in parse_date_range_from_query_llm API call or parsing: {e}")
         return {"date_filter": False, "start_date": None, "end_date": None, "description": "all available data"}
 
 
@@ -144,33 +172,26 @@ def get_cm_query_details(prompt):
     """
 
     try:
-        # Only attempt to initialize client if keys are available
-        if AZURE_OPENAI_KEY and AZURE_OPENAI_ENDPOINT:
-            client = AzureOpenAI(
-                api_key=AZURE_OPENAI_KEY,
-                api_version=AZURE_OPENAI_API_VERSION,
-                azure_endpoint=AZURE_OPENAI_ENDPOINT
+        # Use the globally initialized client
+        if utils_openai_client:
+            response = utils_openai_client.chat.completions.create(
+                model=AZURE_OPENAI_DEPLOYMENT,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0
             )
+            llm_response_content = response.choices[0].message.content.strip()
+            print(f"DEBUG: LLM response for CM parsing: '{llm_response_content}'")  # Debug print for LLM response
         else:
-            print("Azure OpenAI client not initialized in utils.py due to missing environment variables.")
+            print("ERROR: utils.py - Azure OpenAI client is not available for get_cm_query_details.")
             return {
                 "type": "none",
                 "lower": None,
                 "upper": None,
                 **date_info
             }
-
-        response = client.chat.completions.create(
-            model=AZURE_OPENAI_DEPLOYMENT,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0
-        )
-
-        llm_response_content = response.choices[0].message.content.strip()
-        print(f"DEBUG: LLM response for CM parsing: '{llm_response_content}'")  # Debug print for LLM response
 
         # Use regex to safely extract JSON from the response
         json_str_match = re.search(r"\{.*\}", llm_response_content, re.DOTALL)
@@ -226,15 +247,22 @@ Rules for month_of_interest:
 2. If specific month/year (e.g., "July 2024"), use that month.
 3. If "last quarter", use the last month of the last quarter.
 4. If no specific month is mentioned but "last month" is implied by context (e.g., "cost drop in Transportation"), default to "last month".
+5. Ensure the JSON output is perfectly valid, with no trailing commas.
 """
     try:
         # Use the globally initialized client
-        if AZURE_OPENAI_KEY and AZURE_OPENAI_ENDPOINT:
-            client = AzureOpenAI(
-                api_key=AZURE_OPENAI_KEY,
-                api_version=AZURE_OPENAI_API_VERSION,
-                azure_endpoint=AZURE_OPENAI_ENDPOINT
+        if utils_openai_client:
+            response = utils_openai_client.chat.completions.create(
+                model=AZURE_OPENAI_DEPLOYMENT,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0
             )
+            llm_response_content = response.choices[0].message.content.strip()
+            print(
+                f"DEBUG: LLM response for cost drop parsing: '{llm_response_content}'")  # Debug print for LLM response
         else:
             print("ERROR: utils.py - Azure OpenAI client is not available for get_cost_drop_query_details.")
             return {
@@ -243,17 +271,6 @@ Rules for month_of_interest:
                 "month_of_interest_end": last_month_end.strftime('%Y-%m-%d'),
                 "compare_to_previous_month": True
             }
-
-        response = client.chat.completions.create(
-            model=AZURE_OPENAI_DEPLOYMENT,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0
-        )
-        llm_response_content = response.choices[0].message.content.strip()
-        print(f"DEBUG: LLM response for cost drop parsing: '{llm_response_content}'")  # Debug print for LLM response
 
         json_str_match = re.search(r"\{.*\}", llm_response_content, re.DOTALL)
         if json_str_match:
@@ -328,10 +345,11 @@ def calculate_cm(df: pd.DataFrame, cm_filters: dict) -> pd.DataFrame:
     Calculates Contribution Margin (CM) per customer and applies CM filters.
     """
     # Group by customer
+    # Added include_groups=False to silence FutureWarning
     grouped = df.groupby("FinalCustomerName", as_index=False).apply(lambda x: pd.Series({
         "Revenue": x[x["Group1"].isin(REVENUE_GROUPS)]["Amount in USD"].sum(),
         "Cost": x[x["Group1"].isin(COST_GROUPS)]["Amount in USD"].sum()
-    }))
+    }), include_groups=False)
 
     # Calculate CM ratio
     revenue_abs = grouped["Revenue"].abs()

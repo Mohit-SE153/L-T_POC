@@ -9,8 +9,8 @@ import pytz
 import plotly.express as px
 import numpy as np
 from datetime import datetime, timedelta
-from azure.storage.blob import BlobServiceClient  # New import for Azure Blob Storage
-import io  # New import for in-memory file handling
+from azure.storage.blob import BlobServiceClient
+import io
 
 # Import the question routing function
 from questions import get_question_id
@@ -86,14 +86,24 @@ def load_data_from_azure(container_name, blob_name):
         # --- END DEBUGGING PRINT ---
 
         # Read the CSV file from the in-memory stream, explicitly specifying the delimiter
-        df = pd.read_csv(csv_data, delimiter=',')
+        # Added dtype for common problematic columns to avoid DtypeWarning
+        df = pd.read_csv(csv_data, delimiter=',', dtype={
+            'wbs id': str,
+            'Pulse Project ID': str,
+            'Contract ID': str,
+            'sales Region': str  # Added sales Region as it can also be mixed type
+        }, low_memory=False)  # Use low_memory=False to help with mixed types
 
         df = df.drop_duplicates()
         df["Amount in INR"] = df["Amount in INR"].round(2)
         df["Amount in USD"] = df["Amount in USD"].round(2)
-        # Assuming 'Month' column might be in various date formats, 'dayfirst=True' and 'infer_datetime_format=True'
-        # are good for robustness.
-        df["Month"] = pd.to_datetime(df["Month"], errors='coerce', dayfirst=True, infer_datetime_format=True)
+        # Convert 'Month' column to datetime objects
+        # Removed infer_datetime_format as it's deprecated and a strict version is now default
+        df["Month"] = pd.to_datetime(df["Month"], errors='coerce', dayfirst=True)
+
+        # Drop rows where 'Month' could not be parsed (NaT - Not a Time)
+        df.dropna(subset=['Month'], inplace=True)
+
         return df
 
     except Exception as e:
@@ -276,12 +286,14 @@ def main():
                                 monthly_df = df[
                                     (df["Month"].dt.date >= current_month_iter.date()) &
                                     (df["Month"].dt.date < next_month_iter.date())
-                                    ]
+                                    ].copy()  # Use .copy() here
 
-                                monthly_grouped = monthly_df.groupby("FinalCustomerName").apply(lambda x: pd.Series({
-                                    "Revenue": x[x["Group1"].isin(REVENUE_GROUPS)]["Amount in USD"].sum(),
-                                    "Cost": x[x["Group1"].isin(COST_GROUPS)]["Amount in USD"].sum()
-                                }))
+                                # Added include_groups=False to silence FutureWarning
+                                monthly_grouped = monthly_df.groupby("FinalCustomerName", as_index=False).apply(
+                                    lambda x: pd.Series({
+                                        "Revenue": x[x["Group1"].isin(REVENUE_GROUPS)]["Amount in USD"].sum(),
+                                        "Cost": x[x["Group1"].isin(COST_GROUPS)]["Amount in USD"].sum()
+                                    }), include_groups=False)
 
                                 revenue_abs = monthly_grouped["Revenue"].abs()
                                 monthly_grouped["CM_Ratio"] = (monthly_grouped["Revenue"] - monthly_grouped[
