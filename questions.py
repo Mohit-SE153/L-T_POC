@@ -56,7 +56,7 @@ def get_question_id(user_input: str) -> str:
     system_prompt = """
 You are a routing engine that maps natural language questions to logic file identifiers.
 Each identifier corresponds to a question type.
-Return ONLY the identifier, like 'question_1', 'question_2', or 'unknown'.
+Return ONLY the identifier, like 'question_1', 'question_2', 'question_3', or 'unknown'.
 
 Available identifiers and examples:
 - question_1: Questions about customers with CM% thresholds and optional date filters, including listing customers, average CM, total revenue, and CM distribution.
@@ -74,10 +74,15 @@ Available identifiers and examples:
     - "Which cost triggered the Margin drop last month as compared to its previous month in Transportation"
     - "Show me cost increases in Healthcare for July 2024 compared to June"
     - "What expenses went up in Retail last quarter?"
-- question_3: Questions asking for average CM% across project types.
+- question_3: Questions asking for C&B cost variation between any two specified periods (months or quarters).
     Examples for question_3:
-    - "What is the average CM for 'Type A' projects?"
-    - "Calculate average CM for projects of type 'Consulting'"
+    - "How much C&B varied from last quarter to this quarter"
+    - "C&B cost variation between FY26 Q1 and FY25 Q4"
+    - "Compare C&B for FY25 Q4 and FY26 Q2"
+    - "What's the difference in C&B between this quarter and last quarter?"
+    - "How much C&B varied from April 2025 to May 2025"
+    - "Compare C&B for last month and this month"
+    - "C&B variation between June 2025 and July 2024"
 
 If the input doesn’t match any known type, return 'unknown'.
 """
