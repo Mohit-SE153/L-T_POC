@@ -1,54 +1,37 @@
+# In logic/utils.py
+
+# ... (existing imports) ...
 import pandas as pd
 import re
-import numpy as np
+import numpy as np # Ensure numpy is imported
 from dateutil import parser
 from datetime import datetime, timedelta
 from typing import Tuple, Optional
 import json
 import pytz
+import calendar
 from openai import AzureOpenAI
-import os  # Ensure os is imported here too for getenv
+import os
 
 # ---------- CONFIGURATION ----------
-# IMPORTANT: Read API key and endpoint from environment variables for deployment.
 AZURE_OPENAI_KEY = os.getenv("AZURE_OPENAI_KEY")
-# Get raw endpoint, then strip if it's not None
 raw_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_ENDPOINT = raw_endpoint.strip() if raw_endpoint else None
 
-AZURE_OPENAI_DEPLOYMENT = "gpt-35-turbo"
-AZURE_OPENAI_API_VERSION = "2025-01-01-preview"
-
-# --- DEBUGGING PRINTS (for local testing) ---
-print(
-    f"DEBUG: logic/utils.py - AZURE_OPENAI_KEY (first 5 chars): {AZURE_OPENAI_KEY[:5] if AZURE_OPENAI_KEY else 'None'}")
-print(f"DEBUG: logic/utils.py - AZURE_OPENAI_ENDPOINT: '{AZURE_OPENAI_ENDPOINT}'")
-# --- END DEBUGGING PRINTS ---
-
-# ---------- GLOBAL AZURE OPENAI CLIENT INITIALIZATION ----------
-# Initialize client globally, only if environment variables are available
 utils_openai_client = None
 try:
     if AZURE_OPENAI_KEY and AZURE_OPENAI_ENDPOINT:
         utils_openai_client = AzureOpenAI(
             api_key=AZURE_OPENAI_KEY,
-            api_version=AZURE_OPENAI_API_VERSION,
+            api_version="2025-01-01-preview", # Use the specified API version
             azure_endpoint=AZURE_OPENAI_ENDPOINT
         )
-        # Optional: A small test call to verify connectivity
-        # test_response = utils_openai_client.chat.completions.create(
-        #     model=AZURE_OPENAI_DEPLOYMENT,
-        #     messages=[{"role": "user", "content": "Test connection"}],
-        #     max_tokens=5
-        # )
-        # print("DEBUG: utils.py - Azure OpenAI client initialized and tested successfully.")
     else:
         print("WARNING: utils.py - Azure OpenAI client not initialized due to missing environment variables.")
 except Exception as e:
     print(f"CRITICAL ERROR: utils.py - Failed to initialize Azure OpenAI client: {e}")
-    utils_openai_client = None  # Ensure client is None if initialization fails
+    utils_openai_client = None
 
-# Column alias mapping
 column_mapping = {
     "customer": "FinalCustomerName",
     "type": "Type",
@@ -61,35 +44,88 @@ column_mapping = {
     "segment": "Segment"
 }
 
+# --- MISSING FUNCTION: parse_percentage ---
+def parse_percentage(value) -> Optional[float]:
+    """
+    Parses a string or numeric value to a float percentage (decimal).
+    Handles 'null', None, and values with '%' sign.
+    """
+    if value is None or (isinstance(value, str) and value.lower() == 'null'):
+        return None
+    try:
+        if isinstance(value, str):
+            value = value.strip()
+            if value.endswith('%'):
+                return float(value[:-1]) / 100.0
+            else:
+                return float(value) # Assume it's already a decimal if no %
+        return float(value)
+    except ValueError:
+        return None
+# --- END MISSING FUNCTION ---
 
-# ---------- DATE RANGE PARSING (for Question 1) ----------
+
+# (Your existing parse_date_range_from_query_llm function)
+# ... (It should remain as is) ...
+
 def parse_date_range_from_query_llm(query):
-    """
-    Uses LLM to extract precise date ranges from natural language queries.
-    Returns a dictionary with date_filter, start_date, end_date, and description.
-    """
     today = datetime.now(pytz.timezone("Asia/Kolkata")).date()
 
-    system_prompt = f"""Today's date is {today}. You are an expert at extracting precise date ranges from natural language queries.
+    system_prompt = f"""Today's date is {today}. You are an expert at extracting precise date ranges from natural language queries for financial data.
+Follow these rules strictly:
+
+**1. Fiscal Year (FY) Quarters and their Calendar Date Ranges:**
+   (ONLY use these definitions if 'FY', 'fiscal year', or 'financial year' is explicitly mentioned in the query)
+- **FY24 Q1 (April 2023 - June 2023):** Apr 1, 2023 to Jun 30, 2023
+- **FY24 Q2 (July 2023 - Sep 2023):** Jul 1, 2023 to Sep 30, 2023
+- **FY24 Q3 (Oct 2023 - Dec 2023):** Oct 1, 2023 to Dec 31, 2023
+- **FY24 Q4 (Jan 2024 - Mar 2024):** Jan 1, 2024 to Mar 31, 2024
+- **FY25 Q1 (April 2024 - June 2024):** Apr 1, 2024 to Jun 30, 2024
+- **FY25 Q2 (July 2024 - Sep 2024):** Jul 1, 2024 to Sep 30, 2024
+- **FY25 Q3 (Oct 2024 - Dec 2024):** Oct 1, 2024 to Dec 31, 2024
+- **FY25 Q4 (Jan 2025 - Mar 2025):** Jan 1, 2025 to Mar 31, 2025
+- **FY26 Q1 (April 2025 - June 2025):** Apr 1, 2025 to Jun 30, 2025 (This is the current fiscal quarter if today is in Apr-Jun 2025)
+- **FY26 Q2 (July 2025 - Sep 2025):** Jul 1, 2025 to Sep 30, 2025
+- **FY26 Q3 (Oct 2025 - Dec 2025):** Oct 1, 2025 to Dec 31, 2025
+- **FY26 Q4 (Jan 2026 - Mar 2026):** Jan 1, 2026 to Mar 31, 2026
+
+**2. Standard Calendar Year Quarters (CY Q) and their Calendar Date Ranges:**
+   (Use these definitions if a year and 'Q'/'quarter' are mentioned WITHOUT 'FY', 'fiscal year', or 'financial year')
+- **CY Q1:** Jan 1 to Mar 31
+- **CY Q2:** Apr 1 to Jun 30
+- **CY Q3:** Jul 1 to Sep 30
+- **CY Q4:** Oct 1 to Dec 31
+
 Return a JSON object with:
 - 'date_filter': boolean indicating if a date filter was requested
 - 'start_date': YYYY-MM-DD format (first day of period)
 - 'end_date': YYYY-MM-DD format (last day of period)
 - 'description': natural language description of the period
 
-Rules:
-1. For relative periods (like "last month", "previous month", "last quarter"), calculate exact dates based on today's date.
-2. For absolute periods (like "January 2023"), use exact dates.
-3. For ranges (like "from March to May 2023"), use exact start/end dates.
-4. For quarters, use exact quarter boundaries (e.g., Q1 = Jan 1 to Mar 31).
-5. If no date filter, set date_filter=false and return null for dates.
-6. Ensure the JSON output is perfectly valid, with no trailing commas.
+General Rules:
+- **Prioritize explicit 'FY' prefix for fiscal quarters.**
+- **For quarters mentioned without 'FY' (e.g., '2025 Q1', 'Q2 2024'), strictly use the Standard Calendar Year (CY) definitions.** If the year is ambiguous, assume the most relevant past or current calendar year.
+- **For relative periods (e.g., "last month", "previous month", "last quarter"), calculate exact dates based on today's date.** "last quarter" or "this quarter" should refer to the *current fiscal quarter* based on the application's primary financial context, unless explicitly stated as "last *calendar* quarter".
+- For absolute periods, handle both full month names (e.g., "January 2023") and short forms (e.g., "Jan 2023", "Apr 25").
+- For ranges (like "from March to May 2023"), use exact start/end dates.
+- If no date filter, set date_filter=false and return null for dates.
+- Ensure the JSON output is perfectly valid, with no trailing commas.
+
+Examples (Critical for LLM training):
+- "List customers with CM > 90% in **fy 2026 q1**" -> {{"date_filter": true, "start_date": "2025-04-01", "end_date": "2025-06-30", "description": "FY26 Q1"}}
+- "List customers with CM > 90% in **2026 q1**" -> {{"date_filter": true, "start_date": "2026-01-01", "end_date": "2026-03-31", "description": "2026 Q1 Calendar"}}
+- "List customers with CM > 90% in **2025 q2**" -> {{"date_filter": true, "start_date": "2025-04-01", "end_date": "2025-06-30", "description": "2025 Q2 Calendar"}}
+- "List customers with CM > 90% in **fy 2025 q1**" -> {{"date_filter": true, "start_date": "2024-04-01", "end_date": "2024-06-30", "description": "FY25 Q1"}}
+- "last quarter" -> automatically calculate exact dates for last fiscal quarter.
+- "2025 apr" or "April 2025" -> calculate exact dates for April 2025.
+- "FY25 Q4" -> 2025-01-01 to 2025-03-31 (Fiscal Q4)
+- "Q3 2024" -> 2024-07-01 to 2024-09-30 (Calendar Q3)
+- "What is CM in 2025 quarter 1?" -> {{"date_filter": true, "start_date": "2025-01-01", "end_date": "2025-03-31", "description": "2025 Q1 Calendar"}}
 """
     try:
-        # Use the globally initialized client
         if utils_openai_client:
             response = utils_openai_client.chat.completions.create(
-                model=AZURE_OPENAI_DEPLOYMENT,
+                model="gpt-35-turbo", # Use the deployment name
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": query}
@@ -97,70 +133,43 @@ Rules:
                 temperature=0
             )
             llm_response_content = response.choices[0].message.content.strip()
-            print(f"DEBUG: LLM response for date parsing: '{llm_response_content}'")  # Debug print for LLM response
         else:
-            print("ERROR: utils.py - Azure OpenAI client is not available for parse_date_range_from_query_llm.")
             return {"date_filter": False, "start_date": None, "end_date": None, "description": "all available data"}
 
-        # Safely extract and parse JSON using regex to handle potential extra text/trailing commas
         json_str_match = re.search(r"\{.*\}", llm_response_content, re.DOTALL)
         if json_str_match:
             json_str = json_str_match.group()
             result = json.loads(json_str)
         else:
-            print(f"WARNING: No valid JSON found in LLM date parsing response: '{llm_response_content}'")
+            # Fallback if LLM doesn't return valid JSON, or if it indicates no date filter
             return {"date_filter": False, "start_date": None, "end_date": None, "description": "all available data"}
 
         if result.get("date_filter"):
             try:
-                # Ensure start_date and end_date are not None before parsing
                 start_date = parser.parse(result["start_date"]).date() if result.get("start_date") else None
                 end_date = parser.parse(result["end_date"]).date() if result.get("end_date") else None
                 result["start_date"] = start_date
                 result["end_date"] = end_date
-                if not (start_date and end_date):
+                if not (start_date and end_date): # If dates couldn't be parsed or are incomplete
                     result["date_filter"] = False
-                    print(f"WARNING: Date parsing resulted in invalid start/end dates for query: '{query}'")
             except Exception as parse_e:
+                print(f"Error parsing date from LLM response: {parse_e}")
                 result["date_filter"] = False
                 result["start_date"] = None
                 result["end_date"] = None
-                print(f"ERROR: Failed to parse dates from LLM response for query '{query}': {parse_e}")
 
-        print(f"DEBUG: Final parsed date info: {result}")  # Debug print for final parsed dates
         return result
     except Exception as e:
-        print(f"Error in parse_date_range_from_query_llm API call or parsing: {e}")
+        print(f"Error in LLM call for date parsing: {e}")
         return {"date_filter": False, "start_date": None, "end_date": None, "description": "all available data"}
 
 
-# ---------- CM QUERY PARSER (for Question 1) ----------
-def parse_percentage(val):
-    """Converts a value to a float, handling percentages."""
-    try:
-        if isinstance(val, str) and "%" in val:
-            val = float(val.replace("%", "").strip()) / 100
-        elif isinstance(val, str):
-            val = float(val.strip())
-            if val > 1:  # Assume if > 1, it's a percentage entered as a whole number (e.g., 30 instead of 0.3)
-                val = val / 100
-        elif isinstance(val, (int, float)) and val > 1:  # Same for numerical values
-            val = val / 100
-        return float(val)
-    except:
-        return None
-
-
 def get_cm_query_details(prompt):
-    """
-    Uses LLM to extract CM filter details (less_than, greater_than, between, equals)
-    and integrates date parsing.
-    """
     date_info = parse_date_range_from_query_llm(prompt)
 
     system_prompt = """You are a CM filter extraction assistant. From the user query, extract:
     - Filter type: 'less_than', 'greater_than', 'between', 'equals', or 'none' if no CM filter is specified.
-    - Lower bound (convert percentages to decimals: 30% -> 0.3)
+    - Lower bound (convert percentages to decimals: 30% -> 0.3, 215% -> 2.15)
     - Upper bound (if 'between' filter)
 
     Return ONLY valid JSON, nothing else.
@@ -168,15 +177,15 @@ def get_cm_query_details(prompt):
     - "CM < 30%" -> {"type": "less_than", "lower": 0.3}
     - "CM > 20%" -> {"type": "greater_than", "lower": 0.2}
     - "between 10% and 15%" -> {"type": "between", "lower": 0.1, "upper": 0.15}
-    - "CM = 90%" -> {"type": "equals", "lower": 0.9, "upper": 0.9} # Added example for equals
+    - "CM = 90%" -> {"type": "equals", "lower": 0.9}
+    - "CM = 215%" -> {"type": "equals", "lower": 2.15}
     - "Show me all customers" -> {"type": "none", "lower": null, "upper": null}
     """
 
     try:
-        # Use the globally initialized client
         if utils_openai_client:
             response = utils_openai_client.chat.completions.create(
-                model=AZURE_OPENAI_DEPLOYMENT,
+                model="gpt-35-turbo", # Use the deployment name
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt}
@@ -184,77 +193,98 @@ def get_cm_query_details(prompt):
                 temperature=0
             )
             llm_response_content = response.choices[0].message.content.strip()
-            print(f"DEBUG: LLM response for CM parsing: '{llm_response_content}'")  # Debug print for LLM response
         else:
-            print("ERROR: utils.py - Azure OpenAI client is not available for get_cm_query_details.")
             return {
                 "type": "none",
                 "lower": None,
                 "upper": None,
-                **date_info
+                **date_info # Ensure date info is still passed
             }
 
-        # Use regex to safely extract JSON from the response
         json_str_match = re.search(r"\{.*\}", llm_response_content, re.DOTALL)
         if json_str_match:
             json_str = json_str_match.group()
             result = json.loads(json_str)
         else:
-            print(f"WARNING: No valid JSON found in LLM CM parsing response: '{llm_response_content}'")
-            # Fallback if JSON is not found, assume no specific CM filter
+            # Fallback if LLM doesn't return valid JSON
             result = {"type": "none", "lower": None, "upper": None}
 
         result["lower"] = parse_percentage(result.get("lower"))
         result["upper"] = parse_percentage(result.get("upper"))
-        result.update(date_info)  # Merge date info
 
-        print(f"DEBUG: Final parsed CM details: {result}")  # Debug print for final parsed CM details
+        if result.get("type") == "equals" and result.get("lower") is not None:
+            result["upper"] = result["lower"]
+
+        result.update(date_info) # Merge date info parsed previously
         return result
 
     except Exception as e:
-        print(f"Failed to parse CM filters with LLM: {e}")
-        # Default to showing all CMs if parsing fails, but respect date filter if present
+        print(f"Error in LLM call for CM filter parsing: {e}")
         return {
-            "type": "none",  # New type to indicate no specific CM filter
+            "type": "none",
             "lower": None,
             "upper": None,
-            **date_info
+            **date_info # Ensure date info is still passed on error
         }
 
-
-# ---------- Parsing for Question 2 (Cost Drop Analysis) ----------
 def get_cost_drop_query_details(prompt):
-    """
-    Uses LLM to extract segment and specific month for cost drop analysis.
-    """
     today = datetime.now(pytz.timezone("Asia/Kolkata")).date()
-    # Calculate last month's and previous month's dates for context
-    last_month_end = today.replace(day=1) - timedelta(days=1)
-    last_month_start = last_month_end.replace(day=1)
+    # Default to last month if no specific month is mentioned in the query for "month_of_interest"
+    default_month_of_interest_end = today.replace(day=1) - timedelta(days=1)
+    default_month_of_interest_start = default_month_of_interest_end.replace(day=1)
 
-    prev_month_end = last_month_start - timedelta(days=1)
-    prev_month_start = prev_month_end.replace(day=1)
+    # Default to previous month for comparison
+    default_prev_month_end = default_month_of_interest_start - timedelta(days=1)
+    default_prev_month_start = default_prev_month_end.replace(day=1)
 
     system_prompt = f"""Today's date is {today}.
-You are an expert at extracting details for cost drop analysis queries.
-Return a JSON object with:
-- 'segment': The exact segment name as it appears in the data (e.g., 'Transportation', 'Media and technology', 'Healthcare'). If no specific segment is mentioned, return null.
-- 'month_of_interest_start': YYYY-MM-DD format, the first day of the month the user is asking about (e.g., for "last month", this would be {last_month_start.strftime('%Y-%m-%d')}).
-- 'month_of_interest_end': YYYY-MM-DD format, the last day of the month the user is asking about (e.g., for "last month", this would be {last_month_end.strftime('%Y-%m-%d')}).
-- 'compare_to_previous_month': boolean, true if the query asks to compare to the previous month, false otherwise. (For this question type, it will mostly be true).
+You are an expert at extracting precise details for cost drop analysis queries, specifically identifying two comparison periods (months or quarters) and a segment.
 
-Rules for month_of_interest:
-1. If "last month", calculate based on today's date.
-2. If specific month/year (e.g., "July 2024"), use that month.
-3. If "last quarter", use the last month of the last quarter.
-4. If no specific month is mentioned but "last month" is implied by context (e.g., "cost drop in Transportation"), default to "last month".
-5. Ensure the JSON output is perfectly valid, with no trailing commas.
+Follow these rules strictly:
+1.  **Extract exactly two distinct periods for comparison if mentioned (e.g., 'April 2025 vs May 2025').**
+    * The first period mentioned in the query should be mapped to 'period1_start' and 'period1_end'.
+    * The second period mentioned in the query should be mapped to 'period2_start' and 'period2_end'.
+    * Use the exact first and last days of these periods.
+2.  **Handle single-period queries or relative periods:**
+    * If the query specifies a single "month of interest" (e.g., "cost drop in July 2024"), then:
+        * 'period2_start' and 'period2_end' should be that month.
+        * 'period1_start' and 'period1_end' should be the immediately preceding month.
+    * If "last month" is mentioned, 'period2_start' and 'period2_end' should be the last full month.
+    * If "this month" is mentioned, 'period2_start' and 'period2_end' should be the current month.
+    * If "last quarter" is mentioned for the month of interest, take the last month of that quarter.
+3.  **Default Behavior (if no explicit periods):**
+    * If no specific month/quarter is mentioned (e.g., "cost drop in Transportation"), assume "last month" as 'period2' and "previous month" as 'period1'.
+4.  **Segment Extraction:** Extract the exact segment name (e.g., 'Transportation', 'Media and technology', 'Healthcare'). If no specific segment is mentioned, return null.
+
+Return a JSON object with:
+- 'segment': The exact segment name or null.
+- 'period1_start': YYYY-MM-DD format, first day of the *first* comparison period.
+- 'period1_end': YYYY-MM-DD format, last day of the *first* comparison period.
+- 'period2_start': YYYY-MM-DD format, first day of the *second* comparison period (the "month of interest" for which the user wants to see increases).
+- 'period2_end': YYYY-MM-DD format, last day of the *second* comparison period.
+
+Rules for date parsing:
+- For "last month", calculate based on today's date ({today}).
+- For explicit month/year (e.g., "July 2024"), use that month.
+- For "last quarter", use the last month of the last fiscal quarter as the period.
+- Ensure the JSON output is perfectly valid, with no trailing commas.
+
+Example outputs:
+- Query: "Which cost triggered the Margin drop in **April 2025 vs May 2025** in Transportation"
+  Output: {{"segment": "Transportation", "period1_start": "2025-04-01", "period1_end": "2025-04-30", "period2_start": "2025-05-01", "period2_end": "2025-05-31"}}
+- Query: "Which cost triggered the Margin drop **last month** in Healthcare"
+  Output: {{"segment": "Healthcare", "period1_start": "{default_prev_month_start.strftime('%Y-%m-%d')}", "period1_end": "{default_prev_month_end.strftime('%Y-%m-%d')}", "period2_start": "{default_month_of_interest_start.strftime('%Y-%m-%d')}", "period2_end": "{default_month_of_interest_end.strftime('%Y-%m-%d')}"}}
+- Query: "Show me cost increases in Retail for **July 2024** compared to **June 2024**"
+  Output: {{"segment": "Retail", "period1_start": "2024-06-01", "period1_end": "2024-06-30", "period2_start": "2024-07-01", "period2_end": "2024-07-31"}}
+- Query: "What expenses went up in Retail **last quarter**?" (Assume last month of last fiscal quarter)
+  Output: {{"segment": "Retail", "period1_start": "YYYY-MM-DD for month before last quarter's end", "period1_end": "YYYY-MM-DD for month before last quarter's end", "period2_start": "YYYY-MM-DD for last quarter's end month", "period2_end": "YYYY-MM-DD for last quarter's end month"}}
+- Query: "Which cost triggered the Margin drop in Transportation" (Implies "last month" for period2, and "month before last" for period1)
+  Output: {{"segment": "Transportation", "period1_start": "{default_prev_month_start.strftime('%Y-%m-%d')}", "period1_end": "{default_prev_month_end.strftime('%Y-%m-%d')}", "period2_start": "{default_month_of_interest_start.strftime('%Y-%m-%d')}", "period2_end": "{default_month_of_interest_end.strftime('%Y-%m-%d')}"}}
 """
     try:
-        # Use the globally initialized client
         if utils_openai_client:
             response = utils_openai_client.chat.completions.create(
-                model=AZURE_OPENAI_DEPLOYMENT,
+                model="gpt-35-turbo", # Use the deployment name
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt}
@@ -262,15 +292,13 @@ Rules for month_of_interest:
                 temperature=0
             )
             llm_response_content = response.choices[0].message.content.strip()
-            print(
-                f"DEBUG: LLM response for cost drop parsing: '{llm_response_content}'")  # Debug print for LLM response
         else:
-            print("ERROR: utils.py - Azure OpenAI client is not available for get_cost_drop_query_details.")
             return {
                 "segment": None,
-                "month_of_interest_start": last_month_start.strftime('%Y-%m-%d'),
-                "month_of_interest_end": last_month_end.strftime('%Y-%m-%d'),
-                "compare_to_previous_month": True
+                "period1_start": default_prev_month_start,
+                "period1_end": default_prev_month_end,
+                "period2_start": default_month_of_interest_start,
+                "period2_end": default_month_of_interest_end,
             }
 
         json_str_match = re.search(r"\{.*\}", llm_response_content, re.DOTALL)
@@ -278,112 +306,183 @@ Rules for month_of_interest:
             json_str = json_str_match.group()
             result = json.loads(json_str)
         else:
-            print(f"WARNING: No valid JSON found in LLM cost drop parsing response: '{llm_response_content}'")
-            # Fallback to default values if JSON is not found
+            # Default if JSON extraction fails
             result = {
                 "segment": None,
-                "month_of_interest_start": last_month_start.strftime('%Y-%m-%d'),
-                "month_of_interest_end": last_month_end.strftime('%Y-%m-%d'),
-                "compare_to_previous_month": True
+                "period1_start": default_prev_month_start.strftime('%Y-%m-%d'),
+                "period1_end": default_prev_month_end.strftime('%Y-%m-%d'),
+                "period2_start": default_month_of_interest_start.strftime('%Y-%m-%d'),
+                "period2_end": default_month_of_interest_end.strftime('%Y-%m-%d'),
             }
 
-        # Convert date strings to datetime.date objects
-        if result.get("month_of_interest_start"):
-            result["month_of_interest_start"] = parser.parse(result["month_of_interest_start"]).date()
-        if result.get("month_of_interest_end"):
-            result["month_of_interest_end"] = parser.parse(result["month_of_interest_end"]).date()
+        # Convert string dates to datetime.date objects
+        if result.get("period1_start"):
+            result["period1_start"] = parser.parse(result["period1_start"]).date()
+        if result.get("period1_end"):
+            result["period1_end"] = parser.parse(result["period1_end"]).date()
+        if result.get("period2_start"):
+            result["period2_start"] = parser.parse(result["period2_start"]).date()
+        if result.get("period2_end"):
+            result["period2_end"] = parser.parse(result["period2_end"]).date()
 
-        print(f"DEBUG: Final parsed cost drop details: {result}")  # Debug print for final parsed cost drop details
         return result
     except Exception as e:
-        print(f"Error parsing cost drop query details with LLM: {e}")
-        # Fallback to default for "last month" if parsing fails
+        print(f"Error in LLM call for cost drop parsing: {e}")
         return {
             "segment": None,
-            "month_of_interest_start": last_month_start,
-            "month_of_interest_end": last_month_end,
-            "compare_to_previous_month": True
+            "period1_start": default_prev_month_start,
+            "period1_end": default_prev_month_end,
+            "period2_start": default_month_of_interest_start,
+            "period2_end": default_month_of_interest_end,
         }
 
-
-# ---------- Helper for Quarter Dates ----------
-def _get_quarter_dates(quarter_name: str, current_year: int) -> Optional[Tuple[datetime.date, datetime.date]]:
-    """
-    Maps a quarter name (e.g., "FY26 Q1", "last quarter") to its start and end dates.
-    Assumes financial calendar: Q1=Apr-Jun, Q2=Jul-Sep, Q3=Oct-Dec, Q4=Jan-Mar.
-    """
+def _get_quarter_dates(quarter_name: str) -> Optional[Tuple[datetime.date, datetime.date]]:
     today = datetime.now(pytz.timezone("Asia/Kolkata")).date()
+    current_calendar_year = today.year
 
-    # Handle relative terms based on today's date (July 23, 2025)
+    def get_fy_start_calendar_year(fy_suffix: int) -> int:
+        # FY25 means calendar year 2024 (starts April 2024)
+        # FY26 means calendar year 2025 (starts April 2025)
+        # So, FY25 (suffix 25) means 2000 + 25 - 1 = 2024
+        # FY26 (suffix 26) means 2000 + 26 - 1 = 2025
+        return 2000 + fy_suffix - 1
+
+    current_q_start_month = None
+    current_q_end_month = None
+    current_q_num = 0
+    current_q_start_year_calc = current_calendar_year
+    current_q_end_year_calc = current_calendar_year
+
+    # Determine current FISCAL quarter
+    if 4 <= today.month <= 6: # Apr-Jun
+        current_q_start_month = 4
+        current_q_end_month = 6
+        current_q_num = 1 # FY Q1
+    elif 7 <= today.month <= 9: # Jul-Sep
+        current_q_start_month = 7
+        current_q_end_month = 9
+        current_q_num = 2 # FY Q2
+    elif 10 <= today.month <= 12: # Oct-Dec
+        current_q_start_month = 10
+        current_q_end_month = 12
+        current_q_num = 3 # FY Q3
+    else: # Jan-Mar
+        current_q_start_month = 1
+        current_q_end_month = 3
+        current_q_num = 4 # FY Q4
+        current_q_start_year_calc = current_calendar_year # FY Q4 is Jan-Mar of the *next* calendar year relative to FY start
+
+    current_q_start_date = datetime(current_q_start_year_calc, current_q_start_month, 1).date()
+    current_q_end_date = datetime(current_q_end_year_calc, current_q_end_month, calendar.monthrange(current_q_end_year_calc, current_q_end_month)[1]).date()
+
     if "this quarter" in quarter_name.lower() or "current quarter" in quarter_name.lower():
-        return datetime(2025, 7, 1).date(), datetime(2025, 9, 30).date()
+        return current_q_start_date, current_q_end_date
     elif "last quarter" in quarter_name.lower():
-        return datetime(2025, 4, 1).date(), datetime(2025, 6, 30).date()
+        # Calculate dates for the last FISCAL quarter
+        if current_q_num == 1: # Current is FYQ1 (Apr-Jun). Last was FYQ4 of prev FY.
+            prev_fy_calendar_start_year = get_fy_start_calendar_year(today.year % 100) # This FY's calendar start year
+            last_q_start = datetime(prev_fy_calendar_start_year, 1, 1).date() # Prev FY Q4 is Jan-Mar of current calendar year
+            last_q_end = datetime(prev_fy_calendar_start_year, 3, 31).date()
+        elif current_q_num == 2: # Current is FYQ2 (Jul-Sep). Last was FYQ1.
+            last_q_start = datetime(current_q_start_year_calc, 4, 1).date()
+            last_q_end = datetime(current_q_start_year_calc, 6, 30).date()
+        elif current_q_num == 3: # Current is FYQ3 (Oct-Dec). Last was FYQ2.
+            last_q_start = datetime(current_q_start_year_calc, 7, 1).date()
+            last_q_end = datetime(current_q_start_year_calc, 9, 30).date()
+        elif current_q_num == 4: # Current is FYQ4 (Jan-Mar). Last was FYQ3.
+            last_q_start = datetime(current_q_start_year_calc, 10, 1).date()
+            last_q_end = datetime(current_q_start_year_calc, 12, 31).date()
+        return last_q_start, last_q_end
     elif "quarter prior to last" in quarter_name.lower() or "quarter before last" in quarter_name.lower():
-        return datetime(2025, 1, 1).date(), datetime(2025, 3, 31).date()
+        # This logic needs to be robust for "quarter prior to last" (Fiscal based)
+        if current_q_num == 1: # FYQ1, so "quarter prior to last" is FYQ3 of previous FY
+            prev_fy_calendar_start_year = get_fy_start_calendar_year(today.year % 100) - 1
+            return datetime(prev_fy_calendar_start_year, 10, 1).date(), datetime(prev_fy_calendar_start_year, 12, 31).date()
+        elif current_q_num == 2: # FYQ2, so "quarter prior to last" is FYQ4 of previous FY
+            prev_fy_calendar_start_year = get_fy_start_calendar_year(today.year % 100)
+            return datetime(prev_fy_calendar_start_year, 1, 1).date(), datetime(prev_fy_calendar_start_year, 3, 31).date()
+        elif current_q_num == 3: # FYQ3, so "quarter prior to last" is FYQ1
+            return datetime(current_q_start_year_calc, 4, 1).date(), datetime(current_q_start_year_calc, 6, 30).date()
+        elif current_q_num == 4: # FYQ4, so "quarter prior to last" is FYQ2
+            return datetime(current_q_start_year_calc, 7, 1).date(), datetime(current_q_start_year_calc, 9, 30).date()
 
-    # Handle specific FY/Q formats (e.g., "FY26 Q1", "FY25 Q4")
-    match = re.match(r"FY(\d{2})\s*Q(\d)", quarter_name, re.IGNORECASE)
-    if match:
-        fy_suffix = int(match.group(1))
-        q_num = int(match.group(2))
+    # --- Updated Regex for FY/Q parsing ---
+    # Made 'Q' or 'q' optional with space, allowing for "Q1" or "q 1"
+    # This function is specifically for _get_quarter_dates, which is called by parse_cb_comparison_details.
+    # The primary quarter parsing logic for question_1 now resides within the LLM prompt of parse_date_range_from_query_llm.
+    # This function is used to convert the LLM's 'period_name' (like "FY26 Q1") into actual dates.
 
-        fiscal_year_start_calendar_year = 2000 + fy_suffix - 1
+    # 1. Try to parse as Fiscal Year Quarter
+    fy_match = re.match(r"(?:FY|financial year)\s*(\d{2,4})\s*(?:Q|q(?:tr)?)\s*(\d)", quarter_name, re.IGNORECASE)
+    if fy_match:
+        year_part = fy_match.group(1)
+        q_num = int(fy_match.group(2))
 
-        if q_num == 1:  # Apr-Jun
-            return datetime(fiscal_year_start_calendar_year, 4, 1).date(), datetime(fiscal_year_start_calendar_year, 6,
-                                                                                    30).date()
-        elif q_num == 2:  # Jul-Sep
-            return datetime(fiscal_year_start_calendar_year, 7, 1).date(), datetime(fiscal_year_start_calendar_year, 9,
-                                                                                    30).date()
-        elif q_num == 3:  # Oct-Dec
-            return datetime(fiscal_year_start_calendar_year, 10, 1).date(), datetime(fiscal_year_start_calendar_year,
-                                                                                     12, 31).date()
-        elif q_num == 4:  # Jan-Mar (of the *next* calendar year for that fiscal year)
-            return datetime(fiscal_year_start_calendar_year + 1, 1, 1).date(), datetime(
-                fiscal_year_start_calendar_year + 1, 3, 31).date()
+        if len(year_part) == 2:
+            fy_suffix = int(year_part)
+        elif len(year_part) == 4:
+            fy_suffix = int(year_part) % 100
+        else:
+            return None
 
-    return None  # Return None if quarter name cannot be parsed
+        target_calendar_year_start_of_fy = get_fy_start_calendar_year(fy_suffix)
 
+        if q_num == 1: # FY Q1: Apr-Jun
+            return datetime(target_calendar_year_start_of_fy, 4, 1).date(), datetime(target_calendar_year_start_of_fy, 6, 30).date()
+        elif q_num == 2: # FY Q2: Jul-Sep
+            return datetime(target_calendar_year_start_of_fy, 7, 1).date(), datetime(target_calendar_year_start_of_fy, 9, 30).date()
+        elif q_num == 3: # FY Q3: Oct-Dec
+            return datetime(target_calendar_year_start_of_fy, 10, 1).date(), datetime(target_calendar_year_start_of_fy, 12, 31).date()
+        elif q_num == 4: # FY Q4: Jan-Mar (of next calendar year)
+            return datetime(target_calendar_year_start_of_fy + 1, 1, 1).date(), datetime(target_calendar_year_start_of_fy + 1, 3, 31).date()
 
-# ---------- Helper for Month Dates ----------
+    # 2. Try to parse as Calendar Year Quarter (Q1, Q2, Q3, Q4)
+    # This regex is specifically for when the LLM from parse_cb_comparison_details might return something like "2025 Q2"
+    cal_q_match = re.match(r"(\d{4})\s*(?:Q|q(?:tr)?)\s*(\d)", quarter_name, re.IGNORECASE)
+    if cal_q_match:
+        year = int(cal_q_match.group(1))
+        q_num = int(cal_q_match.group(2))
+        if q_num == 1:
+            return datetime(year, 1, 1).date(), datetime(year, 3, 31).date()
+        elif q_num == 2:
+            return datetime(year, 4, 1).date(), datetime(year, 6, 30).date()
+        elif q_num == 3:
+            return datetime(year, 7, 1).date(), datetime(year, 9, 30).date()
+        elif q_num == 4:
+            return datetime(year, 10, 1).date(), datetime(year, 12, 31).date()
+
+    return None
+
 def _get_month_dates(month_name_year: str) -> Optional[Tuple[datetime.date, datetime.date]]:
-    """
-    Maps a month name and year (e.g., "April 2025", "last month", "this month")
-    to its start and end dates.
-    """
     today = datetime.now(pytz.timezone("Asia/Kolkata")).date()
 
     if "this month" in month_name_year.lower() or "current month" in month_name_year.lower():
         start_date = today.replace(day=1)
-        end_date = (start_date + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+        last_day = calendar.monthrange(start_date.year, start_date.month)[1]
+        end_date = start_date.replace(day=last_day)
         return start_date, end_date
     elif "last month" in month_name_year.lower() or "previous month" in month_name_year.lower():
         end_date = today.replace(day=1) - timedelta(days=1)
         start_date = end_date.replace(day=1)
         return start_date, end_date
-    elif "next month" in month_name_year.lower(): # Added next month
-        start_date = (today.replace(day=28) + timedelta(days=4)).replace(day=1) # First day of next month
-        end_date = (start_date + timedelta(days=32)).replace(day=1) - timedelta(days=1) # Last day of next month
+    elif "next month" in month_name_year.lower():
+        current_month_start = today.replace(day=1)
+        start_date = (current_month_start + timedelta(days=32)).replace(day=1)
+        last_day = calendar.monthrange(start_date.year, start_date.month)[1]
+        end_date = start_date.replace(day=last_day)
         return start_date, end_date
 
-    # Try to parse explicit month and year (e.g., "April 2025", "Apr 25")
     try:
-        parsed_date = parser.parse(month_name_year, fuzzy=True)
+        # Fuzzy parsing handles "Apr 25", "April 2025" etc.
+        parsed_date = parser.parse(month_name_year, fuzzy=True, dayfirst=False)
         start_date = parsed_date.replace(day=1).date()
-        next_month = (parsed_date.replace(day=28) + timedelta(days=4)).replace(day=1)
-        end_date = next_month - timedelta(days=1)
-        return start_date, end_date.date()
+        last_day = calendar.monthrange(start_date.year, start_date.month)[1]
+        end_date = start_date.replace(day=last_day)
+        return start_date, end_date
     except ValueError:
-        return None, None  # Cannot parse explicit month
+        return None, None
 
-
-# ---------- Dynamic C&B Comparison Parser (for Question 3) ----------
 def parse_cb_comparison_details(query: str) -> dict:
-    """
-    Uses LLM to determine if the query is for month-to-month or quarter-to-quarter
-    C&B comparison, then extracts the relevant period names and dates.
-    """
     today = datetime.now(pytz.timezone("Asia/Kolkata")).date()
     current_year = today.year
 
@@ -396,8 +495,8 @@ FYXX Q4: January - March (of the next calendar year)
 
 For example:
 - FY25 Q4 is Jan 1, 2025 to Mar 31, 2025
-- FY26 Q1 is Apr 1, 2025 to Jun 30, 2025
-- FY26 Q2 is Jul 1, 2025 to Sep 30, 2025 (This is the current quarter)
+- FY26 Q1 is Apr 1, 2025 to Jun 30, 2025 (This is the current fiscal quarter if today is in Apr-Jun 2025)
+- FY26 Q2 is Jul 1, 2025 to Sep 30, 2025
 - FY26 Q3 is Oct 1, 2025 to Dec 31, 2025
 - FY26 Q4 is Jan 1, 2026 to Mar 31, 2026
 
@@ -406,6 +505,7 @@ Determine if the comparison is 'month' based or 'quarter' based.
 Extract the *first* mentioned period as 'period1_name' and the *second* mentioned period as 'period2_name'.
 These names can be explicit (e.g., "April 2025", "FY26 Q1") or relative (e.g., "last month", "this quarter").
 Prioritize explicit names if they are present.
+Assume quarters mentioned without 'FY' (e.g., '2025 Q1', 'Q2 2024') refer to standard calendar year quarters (Jan-Mar for Q1, Apr-Jun for Q2, etc.).
 
 Return a JSON object with:
 - 'comparison_type': 'month' or 'quarter'. If unclear or only one period, default to 'quarter'.
@@ -427,17 +527,18 @@ Example outputs:
   Output: {{"comparison_type": "quarter", "period1_name": "FY26 Q1", "period2_name": null}}
 - Query: "C&B variation" (no specific periods)
   Output: {{"comparison_type": "quarter", "period1_name": "last quarter", "period2_name": "this quarter"}} # Default to quarter comparison if vague
+- Query: "Compare C&B for 2025 Q1 and 2025 Q2"
+  Output: {{"comparison_type": "quarter", "period1_name": "2025 Q1", "period2_name": "2025 Q2"}} # Calendar quarters
 
 If periods are unclear or only one is mentioned, set the missing one(s) to null but still try to infer comparison_type.
 Ensure the JSON output is perfectly valid, with no trailing commas.
 """
     try:
         if not utils_openai_client:
-            print("ERROR: utils.py - Azure OpenAI client is not available for C&B comparison parsing.")
             return {"comparison_type": "quarter", "period1_name": None, "period2_name": None, "comparison_valid": False}
 
         response = utils_openai_client.chat.completions.create(
-            model=AZURE_OPENAI_DEPLOYMENT,
+            model="gpt-35-turbo", # Use the deployment name
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": query}
@@ -445,17 +546,15 @@ Ensure the JSON output is perfectly valid, with no trailing commas.
             temperature=0
         )
         llm_response_content = response.choices[0].message.content.strip()
-        print(f"DEBUG: LLM response for C&B comparison parsing: '{llm_response_content}'")
 
         json_str_match = re.search(r"\{.*\}", llm_response_content, re.DOTALL)
         if json_str_match:
             json_str = json_str_match.group()
             parsed_llm_response = json.loads(json_str)
         else:
-            print(f"WARNING: No valid JSON found in LLM C&B comparison response: '{llm_response_content}'")
             return {"comparison_type": "quarter", "period1_name": None, "period2_name": None, "comparison_valid": False}
 
-        comparison_type = parsed_llm_response.get("comparison_type", "quarter")  # Default to quarter
+        comparison_type = parsed_llm_response.get("comparison_type", "quarter")
         p1_name = parsed_llm_response.get("period1_name")
         p2_name = parsed_llm_response.get("period2_name")
 
@@ -463,8 +562,8 @@ Ensure the JSON output is perfectly valid, with no trailing commas.
         p2_start, p2_end = None, None
 
         if comparison_type == 'quarter':
-            p1_dates = _get_quarter_dates(p1_name, current_year) if p1_name else (None, None)
-            p2_dates = _get_quarter_dates(p2_name, current_year) if p2_name else (None, None)
+            p1_dates = _get_quarter_dates(p1_name) if p1_name else (None, None)
+            p2_dates = _get_quarter_dates(p2_name) if p2_name else (None, None)
             p1_start, p1_end = p1_dates
             p2_start, p2_end = p2_dates
         elif comparison_type == 'month':
@@ -473,59 +572,70 @@ Ensure the JSON output is perfectly valid, with no trailing commas.
             p1_start, p1_end = p1_dates
             p2_start, p2_end = p2_dates
 
-        # If only one period was identified, and the other is null, try to infer the second period
+        # If only P1 is provided and valid, infer P2 as the next month/quarter
         if p1_start and not p2_start:
-            if comparison_type == 'quarter':
-                # If Q1 is parsed, assume Q2 is the next quarter for comparison
-                if p1_name and "Q1" in p1_name and "FY" in p1_name:
-                    fy_num = int(re.search(r"FY(\d{2})", p1_name).group(1))
-                    next_q_name = f"FY{fy_num} Q2"
-                    p2_start, p2_end = _get_quarter_dates(next_q_name, current_year)
-                    p2_name = next_q_name
-                elif p1_name and "last quarter" in p1_name.lower():
-                    p2_start, p2_end = _get_quarter_dates("this quarter", current_year)
-                    p2_name = "this quarter"
-            elif comparison_type == 'month':
-                # If a month is parsed, assume the next month for comparison
-                if p1_start:
+            if comparison_type == 'month':
+                # Calculate next month
+                if p1_end: # Ensure p1_end is not None before calculating next month
                     next_month_start = (p1_end + timedelta(days=1)).replace(day=1)
-                    next_month_end = (next_month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+                    last_day_next_month = calendar.monthrange(next_month_start.year, next_month_start.month)[1]
+                    next_month_end = next_month_start.replace(day=last_day_next_month)
                     p2_start, p2_end = next_month_start, next_month_end
-                    p2_name = next_month_start.strftime("%B %Y")  # e.g., "May 2025"
+                    p2_name = next_month_start.strftime("%B %Y") # Give a name to the inferred period
+            elif comparison_type == 'quarter':
+                # This part is more complex as it depends on whether P1 was fiscal or calendar
+                # For simplicity and to avoid over-complicating LLM behavior, let's keep it manual or for simple cases.
+                # If a more robust "next quarter" inference is needed, it would require a more sophisticated _get_next_quarter_dates function.
+                pass
+
 
         result = {
             "comparison_type": comparison_type,
             "period1_name": p1_name,
             "period1_start": p1_start,
             "period1_end": p1_end,
-            "period2_name": p2_name,
+            "period2_name": p2_name, # Updated name for the inferred period
             "period2_start": p2_start,
             "period2_end": p2_end,
-            "comparison_valid": p1_start is not None and p2_start is not None
-            # Flag if both periods were successfully parsed
+            "comparison_valid": p1_start is not None and (p2_start is not None or (p2_name is None and p2_start is None))
+            # comparison_valid true if p1 is valid AND (p2 is valid OR p2 wasn't asked for/inferred)
         }
-        print(f"DEBUG: Final parsed C&B comparison info: {result}")
         return result
 
     except Exception as e:
-        print(f"Error in parse_cb_comparison_details API call or parsing: {e}")
+        print(f"Error in LLM call for C&B comparison parsing: {e}")
         return {"comparison_type": "quarter", "period1_name": None, "period2_name": None, "comparison_valid": False}
 
+# --- NEW FUNCTION FOR QUESTION 4 FILTER PARSING ---
+def parse_cb_revenue_trend_details(query: str) -> dict:
+    """
+    Parses a query for C&B cost % of total revenue trend analysis.
+    Primarily extracts date range if specified (e.g., 'last 6 months', '2024').
+    """
+    # Reuse the general date range parsing LLM call
+    date_info = parse_date_range_from_query_llm(query)
 
-# ---------- General Filter Parsing Dispatcher ----------
+    # For trend analysis, we mostly care about the overall date range.
+    # No other specific filters like segments or CM thresholds are expected here.
+    return {
+        "date_filter": date_info["date_filter"],
+        "start_date": date_info["start_date"],
+        "end_date": date_info["end_date"],
+        "description": date_info["description"]
+    }
+# --- END NEW FUNCTION ---
+
+
 def parse_query_filters(user_query: str, question_id: str) -> dict:
-    """
-    Dispatches to the appropriate filter parsing function based on question_id.
-    """
     if question_id == "question_1":
         return get_cm_query_details(user_query)
     elif question_id == "question_2":
         return get_cost_drop_query_details(user_query)
     elif question_id == "question_3":
-        # Now uses the unified C&B comparison parser
         return parse_cb_comparison_details(user_query)
+    elif question_id == "question_4": # --- ADDED FOR QUESTION 4 ---
+        return parse_cb_revenue_trend_details(user_query)
     else:
-        # Default empty filters for unknown types or future types
         return {
             "date_filter": False,
             "start_date": None,
@@ -537,7 +647,6 @@ def parse_query_filters(user_query: str, question_id: str) -> dict:
             "month_of_interest_start": None,
             "month_of_interest_end": None,
             "compare_to_previous_month": False,
-            # These are now handled by the generic 'period' fields in parse_cb_comparison_details
             "comparison_type": "quarter",
             "period1_name": None,
             "period1_start": None,
@@ -545,41 +654,41 @@ def parse_query_filters(user_query: str, question_id: str) -> dict:
             "period2_name": None,
             "period2_start": None,
             "period2_end": None,
-            "comparison_valid": False
+            "comparison_valid": False,
+            "description": "all available data" # Added for question 4 default
         }
 
-
-# CM Calculation and Filtering logic
 REVENUE_GROUPS = ["ONSITE", "OFFSHORE", "INDIRECT REVENUE"]
 COST_GROUPS = [
     "Direct Expense", "OWN OVERHEADS", "Indirect Expense",
     "Project Level Depreciation", "Direct Expense - DU Block Seats Allocation",
     "Direct Expense - DU Pool Allocation", "Establishment Expenses"
 ]
+# Define C&B groups here as well, if they are not exclusively defined in question_3.py
+# (It's better to define them globally here if used by multiple logic files)
+CB_GROUPS = ["C&B Cost Offshore", "C&B Cost Onsite"]
 
-
+# --- COMPLETE calculate_cm function ---
 def calculate_cm(df: pd.DataFrame, cm_filters: dict) -> pd.DataFrame:
-    """
-    Calculates Contribution Margin (CM) per customer and applies CM filters.
-    """
-    # Group by customer
-    # Added include_groups=False to silence FutureWarning
     grouped = df.groupby("FinalCustomerName", as_index=False).apply(lambda x: pd.Series({
         "Revenue": x[x["Group1"].isin(REVENUE_GROUPS)]["Amount in USD"].sum(),
         "Cost": x[x["Group1"].isin(COST_GROUPS)]["Amount in USD"].sum()
     }), include_groups=False)
 
-    # Calculate CM ratio
+    grouped["Revenue"] = grouped["Revenue"].round(2)
+    original_rows = len(grouped)
+    grouped = grouped[grouped["Revenue"] != 0].copy()
+    if len(grouped) < original_rows:
+        pass # print(f"Removed {original_rows - len(grouped)} customers due to zero revenue.")
+
     revenue_abs = grouped["Revenue"].abs()
+    # Handle cases where revenue_abs might be zero to avoid division by zero or inf/-inf
     grouped["CM_Ratio"] = (grouped["Revenue"] - grouped["Cost"]) / revenue_abs.replace(0, np.nan)
     grouped["CM_Ratio"] = grouped["CM_Ratio"].replace([float('inf'), -float('inf')], float('nan'))
 
-    # Drop rows where CM_Ratio is NaN
     grouped = grouped.dropna(subset=["CM_Ratio"])
 
-    # Apply CM filter
-    # This is the corrected filtering logic
-    filtered = grouped.copy()  # Start with a copy to apply filters iteratively
+    filtered = grouped.copy()
     if cm_filters["type"] == "less_than" and cm_filters["lower"] is not None:
         filtered = filtered[filtered["CM_Ratio"] < cm_filters["lower"]]
     elif cm_filters["type"] == "greater_than" and cm_filters["lower"] is not None:
@@ -590,41 +699,37 @@ def calculate_cm(df: pd.DataFrame, cm_filters: dict) -> pd.DataFrame:
                 (filtered["CM_Ratio"] >= cm_filters["lower"]) &
                 (filtered["CM_Ratio"] <= cm_filters["upper"])
                 ]
-        else:  # If 'between' but bounds are missing, treat as 'none'
-            filtered = grouped  # No filter applied
-    elif cm_filters["type"] == "equals" and cm_filters["lower"] is not None: # Added 'equals' logic
-        # For floating point comparisons, it's safer to use a small tolerance
-        tolerance = 0.0001 # 0.01% tolerance
+        else:
+            # If "between" but bounds are missing/invalid, do not apply CM filter
+            pass
+    elif cm_filters["type"] == "equals" and cm_filters["lower"] is not None:
+        tolerance = 0.0001 # Small tolerance for float equality
         filtered = filtered[
             (filtered["CM_Ratio"] >= cm_filters["lower"] - tolerance) &
             (filtered["CM_Ratio"] <= cm_filters["lower"] + tolerance)
         ]
-    # If type is 'none', no CM filter is applied, so 'filtered' remains 'grouped'
 
-    # Format results for display
-    # Sort order depends on filter type for better display
-    # Only sort if there's a specific CM filter type, otherwise default sort
     if cm_filters["type"] != "none":
+        # Sort based on filter type for more intuitive results
         filtered = filtered.sort_values(
             by="CM_Ratio",
-            ascending=(cm_filters["type"] != "greater_than")
-            # Ascending for less_than and between, Descending for greater_than
+            ascending=(cm_filters["type"] == "less_than" or cm_filters["type"] == "equals") # Ascending for less_than/equals, descending for greater_than/between
         ).reset_index(drop=True)
     else:
-        # Default sort if no specific CM filter
         filtered = filtered.sort_values(by="CM_Ratio", ascending=False).reset_index(drop=True)
 
-    filtered["CM (%)"] = filtered["CM_Ratio"].apply(
-        lambda x: "N/A" if pd.isna(x) else f"{x * 100:.2f}%"
+    filtered["CM_Value"] = filtered["CM_Ratio"] * 100 # Store raw CM value for plotting
+    filtered["CM (%)"] = filtered["CM_Value"].apply(
+        lambda x: "N/A" if pd.isna(x) else f"{x:,.2f}%"
     )
+
     filtered["Revenue"] = filtered["Revenue"].apply(lambda x: f"${x:,.2f}")
     filtered["Cost"] = filtered["Cost"].apply(lambda x: f"${x:,.2f}")
 
-    # Add CM_Value for visualizations (percentage as float)
-    filtered["CM_Value"] = filtered["CM_Ratio"] * 100
-
-    # Reset index with serial numbers
+    # Add S.No
+    filtered.reset_index(drop=True, inplace=True)
     filtered.index = filtered.index + 1
     filtered = filtered.rename_axis("S.No").reset_index()
 
-    return filtered[["S.No", "FinalCustomerName", "Revenue", "Cost", "CM (%)", "CM_Value"]]
+    return filtered[["S.No", "FinalCustomerName", "Revenue", "Cost", "CM (%)", "CM_Value"]] # Include CM_Value for plotting in app.py
+# --- END COMPLETE calculate_cm function ---

@@ -54,38 +54,45 @@ def get_question_id(user_input: str) -> str:
         return "unknown"
 
     system_prompt = """
-You are a routing engine that maps natural language questions to logic file identifiers.
-Each identifier corresponds to a question type.
-Return ONLY the identifier, like 'question_1', 'question_2', 'question_3', or 'unknown'.
+    You are a routing engine that maps natural language questions to logic file identifiers.
+    Each identifier corresponds to a question type.
+    Return ONLY the identifier, like 'question_1', 'question_2', 'question_3', 'question_4', or 'unknown'.
 
-Available identifiers and examples:
-- question_1: Questions about customers with CM% thresholds and optional date filters, including listing customers, average CM, total revenue, and CM distribution.
-    Examples for question_1:
-    - "List customers with CM > 90% last quarter"
-    - "Show customers with CM less than 30%"
-    - "What is the CM for customers between 10% and 15% in January 2023?"
-    - "Show me all customers with their CM"
-    - "What is the average CM for all customers?"
-    - "List customers with CM greater than 20%"
-    - "Customers with CM less than 50% in Q1 2024"
-    - "Give me the contribution margin details for all clients"
-- question_2: Questions about specific cost increases/drops for a segment over time (month-over-month comparison).
-    Examples for question_2:
-    - "Which cost triggered the Margin drop last month as compared to its previous month in Transportation"
-    - "Show me cost increases in Healthcare for July 2024 compared to June"
-    - "What expenses went up in Retail last quarter?"
-- question_3: Questions asking for C&B cost variation between any two specified periods (months or quarters).
-    Examples for question_3:
-    - "How much C&B varied from last quarter to this quarter"
-    - "C&B cost variation between FY26 Q1 and FY25 Q4"
-    - "Compare C&B for FY25 Q4 and FY26 Q2"
-    - "What's the difference in C&B between this quarter and last quarter?"
-    - "How much C&B varied from April 2025 to May 2025"
-    - "Compare C&B for last month and this month"
-    - "C&B variation between June 2025 and July 2024"
+    Available identifiers and examples:
+    - question_1: Questions about customers with CM% thresholds and optional date filters, including listing customers, average CM, total revenue, and CM distribution.
+        Examples for question_1:
+        - "List customers with CM > 90% last quarter"
+        - "Show customers with CM less than 30%"
+        - "What is the CM for customers between 10% and 15% in January 2023?"
+        - "Show me all customers with their CM"
+        - "What is the average CM for all customers?"
+        - "List customers with CM greater than 20%"
+        - "Customers with CM less than 50% in Q1 2024"
+        - "Give me the contribution margin details for all clients"
+    - question_2: Questions about specific cost increases/drops for a segment over time (month-over-month comparison).
+        Examples for question_2:
+        - "Which cost triggered the Margin drop last month as compared to its previous month in Transportation"
+        - "Show me cost increases in Healthcare for July 2024 compared to June"
+        - "What expenses went up in Retail last quarter?"
+    - question_3: Questions asking for C&B cost variation between any two specified periods (months or quarters).
+        Examples for question_3:
+        - "How much C&B varied from last quarter to this quarter"
+        - "C&B cost variation between FY26 Q1 and FY25 Q4"
+        - "Compare C&B for FY25 Q4 and FY26 Q2"
+        - "What's the difference in C&B between this quarter and last quarter?"
+        - "How much C&B varied from April 2025 to May 2025"
+        - "Compare C&B for last month and this month"
+        - "C&B variation between June 2025 and July 2024"
+    - question_4: Questions about the Month-over-Month (M-o-M) trend of C&B cost as a percentage of total revenue.
+        Examples for question_4:
+        - "What is M-o-M trend of C&B cost % w.r.t total revenue"
+        - "Show me the monthly C&B cost as a percentage of revenue"
+        - "C&B cost to revenue trend over time"
+        - "Analyze C&B cost percentage of revenue month over month"
+        - "C&B as % of revenue trend for last 6 months"
 
-If the input doesn’t match any known type, return 'unknown'.
-"""
+    If the input doesn’t match any known type, return 'unknown'.
+    """
 
     try:
         response = client.chat.completions.create(
@@ -100,3 +107,4 @@ If the input doesn’t match any known type, return 'unknown'.
     except Exception as e:
         print(f"Error in get_question_id API call: {e}")
         return "unknown"
+

@@ -1,3 +1,5 @@
+# In app.py
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -14,10 +16,11 @@ import io
 
 from questions import get_question_id
 from logic.utils import get_cm_query_details, get_cost_drop_query_details, parse_query_filters, REVENUE_GROUPS, \
-    COST_GROUPS
+    COST_GROUPS, CB_GROUPS # Ensure CB_GROUPS is imported here for consistency with utils and question_4
 from logic.question_1 import run_logic as run_question_1_logic
 from logic.question_2 import run_logic as run_question_2_logic
 from logic.question_3 import run_logic as run_question_3_logic
+from logic.question_4 import run_logic as run_question_4_logic # --- NEW IMPORT ---
 
 try:
     import plotly.express as px
@@ -118,7 +121,7 @@ def main():
     """, unsafe_allow_html=True)
 
     user_query = st.text_input(
-        "💬 Ask your question (e.g., 'List customers with CM > 90% last quarter', 'Which cost triggered the Margin drop last month in Transportation', ...)",
+        "💬 Ask your question (e.g., 'List customers with CM > 90% last quarter', 'Which cost triggered the Margin drop last month in Transportation', 'What is M-o-M trend of C&B cost % w.r.t total revenue', ...)",
         placeholder="Enter your query here..."
     )
 
@@ -129,9 +132,13 @@ def main():
 
         try:
             result_df = pd.DataFrame()
+            if "Message" in parsed_filters and parsed_filters["Message"].startswith("API keys for Azure OpenAI are not configured"):
+                st.error(parsed_filters["Message"])
+                st.stop() # Stop execution if fundamental API config is missing
+
             if question_id == "unknown":
                 st.warning("Sorry, I couldn't understand your question or it's not yet supported.")
-                st.info("Try queries like: 'List customers with CM > 50%' ...")
+                st.info("Try queries like: 'List customers with CM > 50%' or 'What is M-o-M trend of C&B cost % w.r.t total revenue'...")
             elif question_id == "question_1":
                 result_df = run_question_1_logic(df, parsed_filters)
                 if "Message" in result_df.columns:
@@ -162,6 +169,9 @@ def main():
                     st.markdown("## 📊 Key Metrics", unsafe_allow_html=True)
                     col1, col2, col3, col4 = st.columns(4)
                     total_customers = len(result_df)
+                    # For total_rev and total_cost, you need the numeric values from result_df
+                    # result_df currently has them as formatted strings like "$1,234.56"
+                    # You'll need to strip the '$' and ',' and convert to float before summing
                     total_rev = result_df['Revenue'].str.replace(r'[$,]', '', regex=True).astype(float).sum()
                     total_cost = result_df['Cost'].str.replace(r'[$,]', '', regex=True).astype(float).sum()
                     avg_cm = result_df['CM_Value'].replace([np.inf, -np.inf], np.nan).mean()
@@ -186,7 +196,7 @@ def main():
                             except:
                                 return ''
 
-                        display_df = result_df.drop(columns=["CM_Value"])
+                        display_df = result_df.drop(columns=["CM_Value"]) # Drop CM_Value for display
                         styled_display_df = display_df.style.applymap(color_cm, subset=['CM (%)']).set_table_styles([
                             {'selector': 'th', 'props': [('background-color', '#f0f2f6'), ('font-weight', 'bold')]}
                         ])
@@ -270,18 +280,32 @@ def main():
                 if "Message" in result_df.columns:
                     st.warning(result_df["Message"].iloc[0])
                 else:
-                    month_of_interest_start = parsed_filters.get('month_of_interest_start')
-                    current_month_str = month_of_interest_start.strftime('%b %Y') if month_of_interest_start else 'N/A'
-                    prev_month_str = 'N/A'
-                    if month_of_interest_start:
-                        try:
-                            prev_month_date = month_of_interest_start.replace(day=1) - timedelta(days=1)
-                            prev_month_str = prev_month_date.strftime('%b %Y')
-                        except Exception as e:
-                            prev_month_str = 'N/A'
+                    # <--- REPLACE THE FOLLOWING LINES with the updated code below --->
+                    # OLD CODE (or similar):
+                    # month_of_interest_start = parsed_filters.get('month_of_interest_start')
+                    # current_month_str = month_of_interest_start.strftime('%b %Y') if month_of_interest_start else 'N/A'
+                    # prev_month_str = 'N/A'
+                    # if month_of_interest_start:
+                    #     try:
+                    #         prev_month_date = month_of_interest_start.replace(day=1) - timedelta(days=1)
+                    #         prev_month_str = prev_month_date.strftime('%b %Y')
+                    #     except Exception as e:
+                    #         prev_month_str = 'N/A'
+                    #
+                    # st.success(
+                    #     f"Analysis for Segment: '{parsed_filters.get('segment', 'All')}' for {current_month_str} vs {prev_month_str}")
+
+                    # NEW CODE TO INSERT HERE:
+                    period1_start = parsed_filters.get('period1_start')
+                    period2_start = parsed_filters.get('period2_start')
+
+                    period1_str = period1_start.strftime('%b %Y') if period1_start else 'N/A'
+                    period2_str = period2_start.strftime('%b %Y') if period2_start else 'N/A'
 
                     st.success(
-                        f"Analysis for Segment: '{parsed_filters.get('segment', 'All')}' for {current_month_str} vs {prev_month_str}")
+                        f"Analysis for Segment: '{parsed_filters.get('segment', 'All')}' for {period2_str} vs {period1_str}")
+                    # <--- END OF REPLACEMENT --->
+
                     st.write("Costs that increased (potentially triggered margin drop):")
                     st.dataframe(result_df, use_container_width=True)
             elif question_id == "question_3":
@@ -316,6 +340,7 @@ def main():
                         st.info(
                             f"Comparing C&B costs for **{p1_name_display} ({p1_start_date.strftime('%b %Y')})** vs **{p2_name_display} ({p2_start_date.strftime('%b %Y')})**")
 
+                    # Extract numeric values passed by question_3.py for KPIs
                     p1_cost_numeric = result_df["Period1_Cost_Numeric"].iloc[
                         0] if "Period1_Cost_Numeric" in result_df.columns else None
                     p2_cost_numeric = result_df["Period2_Cost_Numeric"].iloc[
@@ -376,6 +401,91 @@ def main():
                             "Plotly is not installed. Install with: pip install plotly to enable visualizations.")
                     else:
                         st.info("Not enough data to generate a comparison chart.")
+            elif question_id == "question_4": # --- NEW BLOCK FOR QUESTION 4 ---
+                st.subheader("📊 C&B Cost % of Total Revenue Trend (M-o-M)")
+                result_df = run_question_4_logic(df, parsed_filters)
+
+                if "Message" in result_df.columns:
+                    st.warning(result_df["Message"].iloc[0])
+                else:
+                    date_filter_msg = "📅 Showing all available data (no specific date filter applied from query)"
+                    if parsed_filters.get("date_filter") and parsed_filters.get("start_date") and parsed_filters.get("end_date"):
+                        date_filter_msg = f"📅 Date Filter: {parsed_filters['start_date'].strftime('%Y-%m-%d')} to {parsed_filters['end_date'].strftime('%Y-%m-%d')}"
+                    st.success(date_filter_msg)
+
+                    st.markdown("### Monthly Trend Data")
+                    st.dataframe(result_df, use_container_width=True)
+
+                    if PLOTLY_AVAILABLE:
+                        st.markdown("### Visual Trend Analysis")
+                        # Need to convert formatted strings back to numeric for plotting
+                        plot_df = result_df.copy()
+                        plot_df['Total Revenue Numeric'] = plot_df['Total Revenue'].str.replace(r'[$,]', '', regex=True).astype(float)
+                        plot_df['Total C&B Cost Numeric'] = plot_df['Total C&B Cost'].str.replace(r'[$,]', '', regex=True).astype(float)
+                        plot_df['C&B % of Revenue Numeric'] = plot_df['C&B % of Revenue'].str.replace('%', '', regex=False).astype(float)
+
+                        # Trend Chart for C&B % of Revenue
+                        fig_trend_cb_revenue = px.line(
+                            plot_df,
+                            x='Month',
+                            y='C&B % of Revenue Numeric',
+                            title='C&B Cost as Percentage of Total Revenue (M-o-M Trend)',
+                            labels={
+                                'Month': 'Month',
+                                'C&B % of Revenue Numeric': 'C&B % of Revenue'
+                            },
+                            line_shape='linear',
+                            markers=True,
+                            color_discrete_sequence=px.colors.qualitative.Plotly # Use a good color sequence
+                        )
+                        fig_trend_cb_revenue.update_traces(mode='lines+markers', hovertemplate=
+                            '<b>Month</b>: %{x|%B %Y}<br>' +
+                            '<b>C&B % of Revenue</b>: %{y:,.2f}%<extra></extra>'
+                        )
+                        fig_trend_cb_revenue.update_layout(
+                            xaxis_title='Month',
+                            yaxis_title='C&B % of Revenue',
+                            hovermode="x unified" # Better hover experience
+                        )
+                        st.plotly_chart(fig_trend_cb_revenue, use_container_width=True)
+
+                        # Optional: Bar chart for Revenue and C&B Cost comparison
+                        st.markdown("#### Monthly Total Revenue and C&B Cost")
+                        fig_revenue_cb_bar = px.bar(
+                            plot_df,
+                            x='Month',
+                            y=['Total Revenue Numeric', 'Total C&B Cost Numeric'],
+                            title='Monthly Total Revenue vs. Total C&B Cost',
+                            labels={
+                                'Month': 'Month',
+                                'value': 'Amount (USD)',
+                                'variable': 'Category'
+                            },
+                            barmode='group', # or 'overlay'
+                            color_discrete_sequence=px.colors.qualitative.D3 # Another color sequence
+                        )
+                        fig_revenue_cb_bar.update_layout(
+                            xaxis_title='Month',
+                            yaxis_title='Amount (USD)',
+                            hovermode="x unified"
+                        )
+                        fig_revenue_cb_bar.update_traces(hovertemplate=
+                            '<b>Month</b>: %{x|%B %Y}<br>' +
+                            '<b>%{customdata[0]}</b>: %{y:$,.2f}<extra></extra>' # Custom hover to show category name
+                        )
+                        fig_revenue_cb_bar.data[0].customdata = [['Total Revenue Numeric'] * len(plot_df)]
+                        fig_revenue_cb_bar.data[1].customdata = [['Total C&B Cost Numeric'] * len(plot_df)]
+                        st.plotly_chart(fig_revenue_cb_bar, use_container_width=True)
+
+
+                    else:
+                        st.warning("Plotly is not installed. Install with: pip install plotly to enable visualizations.")
+                        st.write("Here's a preview of the raw data:")
+                        st.dataframe(result_df, height=400)
+
+            else:
+                st.warning("Sorry, an internal routing error occurred or the question type is not fully supported.")
+
         except Exception as e:
             st.error(f"An error occurred while processing your request: {e}")
             st.error("Please check your query or contact support if the issue persists.")

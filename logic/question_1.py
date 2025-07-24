@@ -30,3 +30,4 @@ def run_logic(df: pd.DataFrame, cm_filters: dict) -> pd.DataFrame:
     result_df = calculate_cm(df, cm_filters)
 
     return result_df
+
