@@ -229,57 +229,23 @@ def get_cm_query_details(prompt):
 
 def get_cost_drop_query_details(prompt):
     today = datetime.now(pytz.timezone("Asia/Kolkata")).date()
-    # Default to last month if no specific month is mentioned in the query for "month_of_interest"
-    default_month_of_interest_end = today.replace(day=1) - timedelta(days=1)
-    default_month_of_interest_start = default_month_of_interest_end.replace(day=1)
-
-    # Default to previous month for comparison
-    default_prev_month_end = default_month_of_interest_start - timedelta(days=1)
-    default_prev_month_start = default_prev_month_end.replace(day=1)
+    last_month_end = today.replace(day=1) - timedelta(days=1)
+    last_month_start = last_month_end.replace(day=1)
 
     system_prompt = f"""Today's date is {today}.
-You are an expert at extracting precise details for cost drop analysis queries, specifically identifying two comparison periods (months or quarters) and a segment.
-
-Follow these rules strictly:
-1.  **Extract exactly two distinct periods for comparison if mentioned (e.g., 'April 2025 vs May 2025').**
-    * The first period mentioned in the query should be mapped to 'period1_start' and 'period1_end'.
-    * The second period mentioned in the query should be mapped to 'period2_start' and 'period2_end'.
-    * Use the exact first and last days of these periods.
-2.  **Handle single-period queries or relative periods:**
-    * If the query specifies a single "month of interest" (e.g., "cost drop in July 2024"), then:
-        * 'period2_start' and 'period2_end' should be that month.
-        * 'period1_start' and 'period1_end' should be the immediately preceding month.
-    * If "last month" is mentioned, 'period2_start' and 'period2_end' should be the last full month.
-    * If "this month" is mentioned, 'period2_start' and 'period2_end' should be the current month.
-    * If "last quarter" is mentioned for the month of interest, take the last month of that quarter.
-3.  **Default Behavior (if no explicit periods):**
-    * If no specific month/quarter is mentioned (e.g., "cost drop in Transportation"), assume "last month" as 'period2' and "previous month" as 'period1'.
-4.  **Segment Extraction:** Extract the exact segment name (e.g., 'Transportation', 'Media and technology', 'Healthcare'). If no specific segment is mentioned, return null.
-
+You are an expert at extracting details for cost drop analysis queries.
 Return a JSON object with:
-- 'segment': The exact segment name or null.
-- 'period1_start': YYYY-MM-DD format, first day of the *first* comparison period.
-- 'period1_end': YYYY-MM-DD format, last day of the *first* comparison period.
-- 'period2_start': YYYY-MM-DD format, first day of the *second* comparison period (the "month of interest" for which the user wants to see increases).
-- 'period2_end': YYYY-MM-DD format, last day of the *second* comparison period.
+- 'segment': The exact segment name as it appears in the data (e.g., 'Transportation', 'Media and technology', 'Healthcare'). If no specific segment is mentioned, return null.
+- 'month_of_interest_start': YYYY-MM-DD format, the first day of the month the user is asking about (e.g., for "last month", this would be {last_month_start.strftime('%Y-%m-%d')}).
+- 'month_of_interest_end': YYYY-MM-DD format, the last day of the month the user is asking about (e.g., for "last month", this would be {last_month_end.strftime('%Y-%m-%d')}).
+- 'compare_to_previous_month': boolean, true if the query asks to compare to the previous month, false otherwise. (For this question type, it will mostly be true).
 
-Rules for date parsing:
-- For "last month", calculate based on today's date ({today}).
-- For explicit month/year (e.g., "July 2024"), use that month.
-- For "last quarter", use the last month of the last fiscal quarter as the period.
-- Ensure the JSON output is perfectly valid, with no trailing commas.
-
-Example outputs:
-- Query: "Which cost triggered the Margin drop in **April 2025 vs May 2025** in Transportation"
-  Output: {{"segment": "Transportation", "period1_start": "2025-04-01", "period1_end": "2025-04-30", "period2_start": "2025-05-01", "period2_end": "2025-05-31"}}
-- Query: "Which cost triggered the Margin drop **last month** in Healthcare"
-  Output: {{"segment": "Healthcare", "period1_start": "{default_prev_month_start.strftime('%Y-%m-%d')}", "period1_end": "{default_prev_month_end.strftime('%Y-%m-%d')}", "period2_start": "{default_month_of_interest_start.strftime('%Y-%m-%d')}", "period2_end": "{default_month_of_interest_end.strftime('%Y-%m-%d')}"}}
-- Query: "Show me cost increases in Retail for **July 2024** compared to **June 2024**"
-  Output: {{"segment": "Retail", "period1_start": "2024-06-01", "period1_end": "2024-06-30", "period2_start": "2024-07-01", "period2_end": "2024-07-31"}}
-- Query: "What expenses went up in Retail **last quarter**?" (Assume last month of last fiscal quarter)
-  Output: {{"segment": "Retail", "period1_start": "YYYY-MM-DD for month before last quarter's end", "period1_end": "YYYY-MM-DD for month before last quarter's end", "period2_start": "YYYY-MM-DD for last quarter's end month", "period2_end": "YYYY-MM-DD for last quarter's end month"}}
-- Query: "Which cost triggered the Margin drop in Transportation" (Implies "last month" for period2, and "month before last" for period1)
-  Output: {{"segment": "Transportation", "period1_start": "{default_prev_month_start.strftime('%Y-%m-%d')}", "period1_end": "{default_prev_month_end.strftime('%Y-%m-%d')}", "period2_start": "{default_month_of_interest_start.strftime('%Y-%m-%d')}", "period2_end": "{default_month_of_interest_end.strftime('%Y-%m-%d')}"}}
+Rules for month_of_interest:
+1. If "last month", calculate based on today's date.
+2. If specific month/year (e.g., "July 2024"), use that month.
+3. If "last quarter", use the last month of the last fiscal quarter as the month of interest.
+4. If no specific month is mentioned but "last month" is implied by context (e.g., "cost drop in Transportation"), default to "last month".
+5. Ensure the JSON output is perfectly valid, with no trailing commas.
 """
     try:
         if utils_openai_client:
@@ -295,10 +261,9 @@ Example outputs:
         else:
             return {
                 "segment": None,
-                "period1_start": default_prev_month_start,
-                "period1_end": default_prev_month_end,
-                "period2_start": default_month_of_interest_start,
-                "period2_end": default_month_of_interest_end,
+                "month_of_interest_start": last_month_start, # Pass as date object directly
+                "month_of_interest_end": last_month_end,     # Pass as date object directly
+                "compare_to_previous_month": True
             }
 
         json_str_match = re.search(r"\{.*\}", llm_response_content, re.DOTALL)
@@ -306,34 +271,26 @@ Example outputs:
             json_str = json_str_match.group()
             result = json.loads(json_str)
         else:
-            # Default if JSON extraction fails
-            result = {
+            result = { # Default if JSON extraction fails
                 "segment": None,
-                "period1_start": default_prev_month_start.strftime('%Y-%m-%d'),
-                "period1_end": default_prev_month_end.strftime('%Y-%m-%d'),
-                "period2_start": default_month_of_interest_start.strftime('%Y-%m-%d'),
-                "period2_end": default_month_of_interest_end.strftime('%Y-%m-%d'),
+                "month_of_interest_start": last_month_start.strftime('%Y-%m-%d'),
+                "month_of_interest_end": last_month_end.strftime('%Y-%m-%d'),
+                "compare_to_previous_month": True
             }
 
-        # Convert string dates to datetime.date objects
-        if result.get("period1_start"):
-            result["period1_start"] = parser.parse(result["period1_start"]).date()
-        if result.get("period1_end"):
-            result["period1_end"] = parser.parse(result["period1_end"]).date()
-        if result.get("period2_start"):
-            result["period2_start"] = parser.parse(result["period2_start"]).date()
-        if result.get("period2_end"):
-            result["period2_end"] = parser.parse(result["period2_end"]).date()
+        if result.get("month_of_interest_start"):
+            result["month_of_interest_start"] = parser.parse(result["month_of_interest_start"]).date()
+        if result.get("month_of_interest_end"):
+            result["month_of_interest_end"] = parser.parse(result["month_of_interest_end"]).date()
 
         return result
     except Exception as e:
         print(f"Error in LLM call for cost drop parsing: {e}")
         return {
             "segment": None,
-            "period1_start": default_prev_month_start,
-            "period1_end": default_prev_month_end,
-            "period2_start": default_month_of_interest_start,
-            "period2_end": default_month_of_interest_end,
+            "month_of_interest_start": last_month_start,
+            "month_of_interest_end": last_month_end,
+            "compare_to_previous_month": True
         }
 
 def _get_quarter_dates(quarter_name: str) -> Optional[Tuple[datetime.date, datetime.date]]:

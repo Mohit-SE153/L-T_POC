@@ -280,32 +280,18 @@ def main():
                 if "Message" in result_df.columns:
                     st.warning(result_df["Message"].iloc[0])
                 else:
-                    # <--- REPLACE THE FOLLOWING LINES with the updated code below --->
-                    # OLD CODE (or similar):
-                    # month_of_interest_start = parsed_filters.get('month_of_interest_start')
-                    # current_month_str = month_of_interest_start.strftime('%b %Y') if month_of_interest_start else 'N/A'
-                    # prev_month_str = 'N/A'
-                    # if month_of_interest_start:
-                    #     try:
-                    #         prev_month_date = month_of_interest_start.replace(day=1) - timedelta(days=1)
-                    #         prev_month_str = prev_month_date.strftime('%b %Y')
-                    #     except Exception as e:
-                    #         prev_month_str = 'N/A'
-                    #
-                    # st.success(
-                    #     f"Analysis for Segment: '{parsed_filters.get('segment', 'All')}' for {current_month_str} vs {prev_month_str}")
-
-                    # NEW CODE TO INSERT HERE:
-                    period1_start = parsed_filters.get('period1_start')
-                    period2_start = parsed_filters.get('period2_start')
-
-                    period1_str = period1_start.strftime('%b %Y') if period1_start else 'N/A'
-                    period2_str = period2_start.strftime('%b %Y') if period2_start else 'N/A'
+                    month_of_interest_start = parsed_filters.get('month_of_interest_start')
+                    current_month_str = month_of_interest_start.strftime('%b %Y') if month_of_interest_start else 'N/A'
+                    prev_month_str = 'N/A'
+                    if month_of_interest_start:
+                        try:
+                            prev_month_date = month_of_interest_start.replace(day=1) - timedelta(days=1)
+                            prev_month_str = prev_month_date.strftime('%b %Y')
+                        except Exception as e:
+                            prev_month_str = 'N/A'
 
                     st.success(
-                        f"Analysis for Segment: '{parsed_filters.get('segment', 'All')}' for {period2_str} vs {period1_str}")
-                    # <--- END OF REPLACEMENT --->
-
+                        f"Analysis for Segment: '{parsed_filters.get('segment', 'All')}' for {current_month_str} vs {prev_month_str}")
                     st.write("Costs that increased (potentially triggered margin drop):")
                     st.dataframe(result_df, use_container_width=True)
             elif question_id == "question_3":
