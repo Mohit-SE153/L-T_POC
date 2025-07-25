@@ -16,11 +16,11 @@ import io
 
 from questions import get_question_id
 from logic.utils import get_cm_query_details, get_cost_drop_query_details, parse_query_filters, REVENUE_GROUPS, \
-    COST_GROUPS, CB_GROUPS # Ensure CB_GROUPS is imported here for consistency with utils and question_4
+    COST_GROUPS, CB_GROUPS
 from logic.question_1 import run_logic as run_question_1_logic
 from logic.question_2 import run_logic as run_question_2_logic
 from logic.question_3 import run_logic as run_question_3_logic
-from logic.question_4 import run_logic as run_question_4_logic # --- NEW IMPORT ---
+from logic.question_4 import run_logic as run_question_4_logic
 
 try:
     import plotly.express as px
@@ -84,13 +84,12 @@ def format_currency_dynamic(value):
 
 def display_kpi(col, label, value, delta_text=None, delta_color_class=""):
     with col:
-        st.markdown('<div class="kpi-container">', unsafe_allow_html=True)
+        # Removed the kpi-card div to eliminate the background box
         st.markdown(f"""
-            <div class="custom-metric-label">{label}</div>
-            <div class="custom-metric-value">{value}</div>
-            {f'<div class="custom-metric-delta {delta_color_class}">{delta_text}</div>' if delta_text else ''}
+            <div class="kpi-label-top">{label}</div>
+            <div class="kpi-value-bottom">{value}</div>
+            {f'<div class="kpi-delta-bottom {delta_color_class}">{delta_text}</div>' if delta_text else ''}
         """, unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
 
 
 def main():
@@ -103,20 +102,97 @@ def main():
     elif "Message" in df.columns and df["Message"].iloc[0].startswith("Failed to load data from Azure Storage:"):
         st.stop()
 
+    # --- UPDATED CSS FOR THE DESIRED KPI LOOK ---
     st.markdown("""
     <style>
-    h2,h2+div{margin-top:0!important;margin-bottom:0!important;padding-top:0!important;padding-bottom:0!important;}
-    div[data-testid="stVerticalBlock"]>h2{margin-top:0!important;margin-bottom:0!important;padding-top:0!important;padding-bottom:0!important;}
-    div[data-testid="stVerticalBlock"]>div>div[data-testid="stHorizontalBlock"]{margin-top:-150px!important;}
-    .kpi-container{padding:10px;margin-bottom:8px;display:flex;flex-direction:column;justify-content:center;text-align:center;min-height:25px;}
-    .delta-green{color:#155724!important;font-weight:bold!important;}
-    .delta-red{color:#721c24!important;font-weight:bold!important;}
-    .delta-yellow{color:#856404!important;font-weight:bold!important;}
-    .custom-metric-label{font-size:2 rem!important;color:#b0b3b8!important;margin-bottom:2px;}
-    .custom-metric-value{font-size:1.8 rem!important;font-weight:bold!important;color:#fff!important;margin-bottom:2px;}
-    .custom-metric-delta{font-size:1.5 rem!important;}
-    .stMetric{display:none!important;visibility:hidden!important;height:0;padding:0;margin:0;}
-    .stMetric>div{display:none!important;visibility:hidden!important;height:0;padding:0;margin:0;}
+    /* General body/container adjustments for consistent spacing */
+    body {
+        margin: 0;
+        padding: 0;
+    }
+
+    /* Reduce top margin for all h2 tags if not first element */
+    h2 {
+        margin-top: 1rem !important; /* Adjust as needed */
+        margin-bottom: 0.5rem !important;
+        padding-top: 0 !important;
+        padding-bottom: 0 !important;
+    }
+
+    /* Target specific Streamlit elements for better control */
+    div[data-testid="stVerticalBlock"] > h2 {
+        margin-top: 0rem !important; /* Keep the first H2 tight to the element above if desired */
+        margin-bottom: 0.5rem !important;
+        padding-top: 0 !important;
+        padding-bottom: 0 !important;
+    }
+
+    /* This targets the horizontal block likely containing the metrics. */
+    div[data-testid="stVerticalBlock"] > div > div[data-testid="stHorizontalBlock"] {
+        margin-top: 0px !important; /* Ensure no negative margin pulling it up */
+        margin-bottom: 1rem !important; /* Add some space below the metrics */
+        /* To make column spacing like your desired image, use a bit of gap */
+        gap: 3rem; /* Adjust this value for more or less space between KPIs */
+    }
+
+    /* KPI Styling - Removed background and centering */
+    /* These styles apply directly to the text elements now */
+
+    /* Label at the top */
+    .kpi-label-top {
+        font-size: 1rem !important; /* Adjust font size to match desired */
+        color: #b0b3b8 !important; /* Streamlit's default text color for labels */
+        margin-bottom: 0.2rem; /* Small space between label and value */
+        text-align: left; /* Align label to left as in your example */
+        width: 100%; /* Ensure it takes full width of its column */
+    }
+
+    /* Value at the bottom */
+    .kpi-value-bottom {
+        font-size: 1.8rem !important; /* Adjust font size for main value */
+        font-weight: bold !important;
+        color: #fff !important; /* White for the main value */
+        margin-bottom: 0.2rem; /* Small space if delta exists */
+        text-align: left; /* Align value to left */
+        width: 100%; /* Ensure it takes full width of its column */
+    }
+
+    /* Delta text (if present) */
+    .kpi-delta-bottom {
+        font-size: 0.9rem !important; /* Adjust font size for delta */
+        text-align: left; /* Align delta to left */
+        width: 100%; /* Ensure it takes full width of its column */
+    }
+
+    /* Delta colors (can be customized further) */
+    .delta-green {
+        color: #00FF00 !important; /* Brighter green */
+        font-weight: bold !important;
+    }
+    .delta-red {
+        color: #FF4B4B !important; /* Brighter red */
+        font-weight: bold !important;
+    }
+    .delta-yellow {
+        color: #FFD700 !important; /* Gold-like yellow */
+        font-weight: bold !important;
+    }
+
+    /* Hide Streamlit's default metric widget (already present) */
+    .stMetric {
+        display: none !important;
+        visibility: hidden !important;
+        height: 0;
+        padding: 0;
+        margin: 0;
+    }
+    .stMetric > div {
+        display: none !important;
+        visibility: hidden !important;
+        height: 0;
+        padding: 0;
+        margin: 0;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -167,7 +243,8 @@ def main():
                     st.write(cm_filter_msg)
 
                     st.markdown("## 📊 Key Metrics", unsafe_allow_html=True)
-                    col1, col2, col3, col4 = st.columns(4)
+                    # Use a wider column distribution for KPIs if they are small, or keep 4
+                    col1, col2, col3, col4 = st.columns(4) # Keep 4 columns for now
                     total_customers = len(result_df)
                     # For total_rev and total_cost, you need the numeric values from result_df
                     # result_df currently has them as formatted strings like "$1,234.56"
@@ -188,16 +265,18 @@ def main():
                                 cm_val = float(str(val).replace('%', ''))
                                 if cm_val > cm_threshold:
                                     return 'background-color: #d4edda; color: #155724;'
-                                elif cm_val > 30:
+                                elif cm_val > 30: # Assuming 30% is a reasonable yellow threshold
                                     return 'background-color: #fff3cd; color: #856404;'
                                 elif cm_val < 0:
                                     return 'background-color: #f8d7da; color: #721c24;'
                                 return ''
-                            except:
+                            except ValueError: # Catch cases where conversion to float fails
                                 return ''
 
                         display_df = result_df.drop(columns=["CM_Value"]) # Drop CM_Value for display
-                        styled_display_df = display_df.style.applymap(color_cm, subset=['CM (%)']).set_table_styles([
+                        # Apply style with a safer way that handles potential NaN or non-numeric
+                        # Use apply rather than applymap for better column-wise control
+                        styled_display_df = display_df.style.map(color_cm, subset=['CM (%)']).set_table_styles([
                             {'selector': 'th', 'props': [('background-color', '#f0f2f6'), ('font-weight', 'bold')]}
                         ])
                         st.dataframe(styled_display_df, use_container_width=True)
@@ -276,32 +355,17 @@ def main():
                             )
             elif question_id == "question_2":
                 st.subheader("📉 Cost Drop Analysis")
-                # Ensure parsed_filters includes month_of_interest_name and compare_to_month_name
-                # The 'parsed_filters' comes from parse_query_filters, but for question_2 specifically,
-                # we need the output of get_cost_drop_query_details which populates these.
-                # Assuming 'parsed_filters' already contains the output of get_cost_drop_query_details
-                # or that get_cost_drop_query_details is called to populate it.
-                # In your previous app.py, you had 'filters = get_cost_drop_query_details(user_query)'
-                # which would be the correct source for these specific month names.
+                filters = get_cost_drop_query_details(user_query)
 
-                # Let's use 'filters' as it was named in previous app.py snippet for clarity
-                # Make sure the 'filters' variable is populated correctly from get_cost_drop_query_details
-                # This line would typically be right before 'result_df = run_question_2_logic(...)':
-                filters = get_cost_drop_query_details(user_query)  # This call populates month_of_interest_name etc.
-
-                # Check if get_cost_drop_query_details returned a message (e.g., API error)
                 if filters.get("Message"):
                     st.warning(filters["Message"])
-                    return  # Exit the function or handle appropriately
+                    return
 
-                # Call the logic for question 2
-                result_df = run_question_2_logic(df, filters)  # Pass the filters dictionary here
+                result_df = run_question_2_logic(df, filters)
 
                 if "Message" in result_df.columns:
                     st.warning(result_df["Message"].iloc[0])
                 else:
-                    # --- CRUCIAL CHANGE HERE ---
-                    # Use the names returned by get_cost_drop_query_details directly from the 'filters' dictionary.
                     current_month_display_name = filters.get("month_of_interest_name", "N/A Month")
                     compare_to_month_display_name = filters.get("compare_to_month_name", "N/A Month")
 
@@ -342,7 +406,6 @@ def main():
                         st.info(
                             f"Comparing C&B costs for **{p1_name_display} ({p1_start_date.strftime('%b %Y')})** vs **{p2_name_display} ({p2_start_date.strftime('%b %Y')})**")
 
-                    # Extract numeric values passed by question_3.py for KPIs
                     p1_cost_numeric = result_df["Period1_Cost_Numeric"].iloc[
                         0] if "Period1_Cost_Numeric" in result_df.columns else None
                     p2_cost_numeric = result_df["Period2_Cost_Numeric"].iloc[
@@ -403,7 +466,7 @@ def main():
                             "Plotly is not installed. Install with: pip install plotly to enable visualizations.")
                     else:
                         st.info("Not enough data to generate a comparison chart.")
-            elif question_id == "question_4": # --- NEW BLOCK FOR QUESTION 4 ---
+            elif question_id == "question_4":
                 st.subheader("📊 C&B Cost % of Total Revenue Trend (M-o-M)")
                 result_df = run_question_4_logic(df, parsed_filters)
 
@@ -420,13 +483,11 @@ def main():
 
                     if PLOTLY_AVAILABLE:
                         st.markdown("### Visual Trend Analysis")
-                        # Need to convert formatted strings back to numeric for plotting
                         plot_df = result_df.copy()
                         plot_df['Total Revenue Numeric'] = plot_df['Total Revenue'].str.replace(r'[$,]', '', regex=True).astype(float)
                         plot_df['Total C&B Cost Numeric'] = plot_df['Total C&B Cost'].str.replace(r'[$,]', '', regex=True).astype(float)
                         plot_df['C&B % of Revenue Numeric'] = plot_df['C&B % of Revenue'].str.replace('%', '', regex=False).astype(float)
 
-                        # Trend Chart for C&B % of Revenue
                         fig_trend_cb_revenue = px.line(
                             plot_df,
                             x='Month',
@@ -438,7 +499,7 @@ def main():
                             },
                             line_shape='linear',
                             markers=True,
-                            color_discrete_sequence=px.colors.qualitative.Plotly # Use a good color sequence
+                            color_discrete_sequence=px.colors.qualitative.Plotly
                         )
                         fig_trend_cb_revenue.update_traces(mode='lines+markers', hovertemplate=
                             '<b>Month</b>: %{x|%B %Y}<br>' +
@@ -447,11 +508,10 @@ def main():
                         fig_trend_cb_revenue.update_layout(
                             xaxis_title='Month',
                             yaxis_title='C&B % of Revenue',
-                            hovermode="x unified" # Better hover experience
+                            hovermode="x unified"
                         )
                         st.plotly_chart(fig_trend_cb_revenue, use_container_width=True)
 
-                        # Optional: Bar chart for Revenue and C&B Cost comparison
                         st.markdown("#### Monthly Total Revenue and C&B Cost")
                         fig_revenue_cb_bar = px.bar(
                             plot_df,
@@ -463,20 +523,14 @@ def main():
                                 'value': 'Amount (USD)',
                                 'variable': 'Category'
                             },
-                            barmode='group', # or 'overlay'
-                            color_discrete_sequence=px.colors.qualitative.D3 # Another color sequence
+                            barmode='group',
+                            color_discrete_sequence=px.colors.qualitative.D3
                         )
                         fig_revenue_cb_bar.update_layout(
                             xaxis_title='Month',
                             yaxis_title='Amount (USD)',
                             hovermode="x unified"
                         )
-                        fig_revenue_cb_bar.update_traces(hovertemplate=
-                            '<b>Month</b>: %{x|%B %Y}<br>' +
-                            '<b>%{customdata[0]}</b>: %{y:$,.2f}<extra></extra>' # Custom hover to show category name
-                        )
-                        fig_revenue_cb_bar.data[0].customdata = [['Total Revenue Numeric'] * len(plot_df)]
-                        fig_revenue_cb_bar.data[1].customdata = [['Total C&B Cost Numeric'] * len(plot_df)]
                         st.plotly_chart(fig_revenue_cb_bar, use_container_width=True)
 
 
