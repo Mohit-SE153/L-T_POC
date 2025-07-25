@@ -227,30 +227,49 @@ def get_cm_query_details(prompt):
             **date_info # Ensure date info is still passed on error
         }
 
+
 def get_cost_drop_query_details(prompt):
     today = datetime.now(pytz.timezone("Asia/Kolkata")).date()
+
+    # Calculate last month's dates for default/fallback
     last_month_end = today.replace(day=1) - timedelta(days=1)
     last_month_start = last_month_end.replace(day=1)
+    last_month_name = last_month_start.strftime("%B %Y")
 
-    system_prompt = f"""Today's date is {today}.
-You are an expert at extracting details for cost drop analysis queries.
+    # Calculate month prior to last month for default/fallback
+    month_prior_to_last_end = last_month_start - timedelta(days=1)
+    month_prior_to_last_start = month_prior_to_last_end.replace(day=1)
+    month_prior_to_last_name = month_prior_to_last_start.strftime("%B %Y")
+
+    system_prompt = f"""Today's date is {today.strftime('%Y-%m-%d')}.
+You are an expert at extracting details for cost drop analysis queries, specifically identifying two months for comparison.
 Return a JSON object with:
-- 'segment': The exact segment name as it appears in the data (e.g., 'Transportation', 'Media and technology', 'Healthcare'). If no specific segment is mentioned, return null.
-- 'month_of_interest_start': YYYY-MM-DD format, the first day of the month the user is asking about (e.g., for "last month", this would be {last_month_start.strftime('%Y-%m-%d')}).
-- 'month_of_interest_end': YYYY-MM-DD format, the last day of the month the user is asking about (e.g., for "last month", this would be {last_month_end.strftime('%Y-%m-%d')}).
-- 'compare_to_previous_month': boolean, true if the query asks to compare to the previous month, false otherwise. (For this question type, it will mostly be true).
+- 'segment': The exact segment name (e.g., 'Transportation', 'Media and technology', 'Healthcare'). If no specific segment, return null.
+- 'month1_name': The natural language name of the FIRST month mentioned or implied (e.g., "April 2025", "last month", "current month"). If implied as "last month", use "{last_month_name}".
+- 'month2_name': The natural language name of the SECOND month mentioned or implied for comparison (e.g., "March 2025", "previous month"). If implied as "previous month" relative to "last month", use "{month_prior_to_last_name}". If only one month is explicitly mentioned (e.g., "cost drop in July 2024"), infer the second month as the one chronologically *before* month1.
+- 'month_of_interest_name': The name of the month that the user is primarily interested in seeing data for (the later month in the comparison).
+- 'compare_to_month_name': The name of the month being compared against (the earlier month in the comparison).
 
-Rules for month_of_interest:
-1. If "last month", calculate based on today's date.
-2. If specific month/year (e.g., "July 2024"), use that month.
-3. If "last quarter", use the last month of the last fiscal quarter as the month of interest.
-4. If no specific month is mentioned but "last month" is implied by context (e.g., "cost drop in Transportation"), default to "last month".
-5. Ensure the JSON output is perfectly valid, with no trailing commas.
+Rules for determining 'month_of_interest_name' and 'compare_to_month_name':
+- If the query is "from X to Y", then X is 'compare_to_month_name' and Y is 'month_of_interest_name'.
+- If the query is "X compared to Y", then X is 'month_of_interest_name' and Y is 'compare_to_month_name'.
+- If the query is "last month compared to previous month", then 'last month' is 'month_of_interest_name' and 'previous month' is 'compare_to_month_name'.
+- If only one month is mentioned (e.g., "cost drop in July 2024"), then that month is 'month_of_interest_name', and the month immediately preceding it is 'compare_to_month_name'.
+- If the query is vague (e.g., "cost drop in Transportation"), default to 'month1_name': "{last_month_name}" and 'month2_name': "{month_prior_to_last_name}". In this default case, '{last_month_name}' is 'month_of_interest_name' and '{month_prior_to_last_name}' is 'compare_to_month_name'.
+
+Ensure the JSON output is perfectly valid, with no trailing commas.
+
+Examples:
+- "Which cost triggered the Margin drop from march 2025 to april 2025 in Transportation" -> {{"segment": "Transportation", "month1_name": "March 2025", "month2_name": "April 2025", "month_of_interest_name": "April 2025", "compare_to_month_name": "March 2025"}}
+- "Which cost triggered the Margin drop last month in Transportation" -> {{"segment": "Transportation", "month1_name": "{last_month_name}", "month2_name": "{month_prior_to_last_name}", "month_of_interest_name": "{last_month_name}", "compare_to_month_name": "{month_prior_to_last_name}"}}
+- "Show me cost increases in Healthcare for July 2024 compared to June" -> {{"segment": "Healthcare", "month1_name": "July 2024", "month2_name": "June 2024", "month_of_interest_name": "July 2024", "compare_to_month_name": "June 2024"}}
+- "What expenses went up in Retail in August 2025" -> {{"segment": "Retail", "month1_name": "August 2025", "month2_name": "July 2025", "month_of_interest_name": "August 2025", "compare_to_month_name": "July 2025"}}
+- "cost drop for Media and Technology" -> {{"segment": "Media and technology", "month1_name": "{last_month_name}", "month2_name": "{month_prior_to_last_name}", "month_of_interest_name": "{last_month_name}", "compare_to_month_name": "{month_prior_to_last_name}"}}
 """
     try:
         if utils_openai_client:
             response = utils_openai_client.chat.completions.create(
-                model="gpt-35-turbo", # Use the deployment name
+                model="gpt-35-turbo",  # Use the deployment name
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt}
@@ -261,9 +280,15 @@ Rules for month_of_interest:
         else:
             return {
                 "segment": None,
-                "month_of_interest_start": last_month_start, # Pass as date object directly
-                "month_of_interest_end": last_month_end,     # Pass as date object directly
-                "compare_to_previous_month": True
+                "month1_name": last_month_name,
+                "month2_name": month_prior_to_last_name,
+                "month_of_interest_name": last_month_name,
+                "compare_to_month_name": month_prior_to_last_name,
+                "month_of_interest_start": last_month_start,  # Keep for run_logic
+                "month_of_interest_end": last_month_end,
+                "compare_to_month_start": month_prior_to_last_start,  # Keep for run_logic
+                "compare_to_month_end": month_prior_to_last_end,
+                "compare_to_previous_month": True  # This can largely be inferred/removed now
             }
 
         json_str_match = re.search(r"\{.*\}", llm_response_content, re.DOTALL)
@@ -271,26 +296,60 @@ Rules for month_of_interest:
             json_str = json_str_match.group()
             result = json.loads(json_str)
         else:
-            result = { # Default if JSON extraction fails
+            # Fallback if LLM doesn't return valid JSON
+            result = {
                 "segment": None,
-                "month_of_interest_start": last_month_start.strftime('%Y-%m-%d'),
-                "month_of_interest_end": last_month_end.strftime('%Y-%m-%d'),
-                "compare_to_previous_month": True
+                "month1_name": last_month_name,
+                "month2_name": month_prior_to_last_name,
+                "month_of_interest_name": last_month_name,
+                "compare_to_month_name": month_prior_to_last_name,
             }
 
-        if result.get("month_of_interest_start"):
-            result["month_of_interest_start"] = parser.parse(result["month_of_interest_start"]).date()
-        if result.get("month_of_interest_end"):
-            result["month_of_interest_end"] = parser.parse(result["month_of_interest_end"]).date()
+        # Convert month names to actual date objects using _get_month_dates
+        mo_interest_dates = _get_month_dates(result.get("month_of_interest_name"))
+        compare_mo_dates = _get_month_dates(result.get("compare_to_month_name"))
+
+        result["month_of_interest_start"] = mo_interest_dates[0] if mo_interest_dates else None
+        result["month_of_interest_end"] = mo_interest_dates[1] if mo_interest_dates else None
+        result["compare_to_month_start"] = compare_mo_dates[0] if compare_mo_dates else None
+        result["compare_to_month_end"] = compare_mo_dates[1] if compare_mo_dates else None
+
+        # Add a flag for comparison validity, mainly to catch if date parsing fails
+        result["comparison_valid"] = (
+                result["month_of_interest_start"] is not None and
+                result["compare_to_month_start"] is not None
+        )
+
+        # Ensure sensible defaults if LLM somehow fails to provide names or dates
+        if not result["month_of_interest_start"]:
+            result["month_of_interest_start"] = last_month_start
+            result["month_of_interest_end"] = last_month_end
+            result["month_of_interest_name"] = last_month_name
+            result["comparison_valid"] = False  # Mark as invalid if a core date is missing
+
+        if not result["compare_to_month_start"]:
+            result["compare_to_month_start"] = month_prior_to_last_start
+            result["compare_to_month_end"] = month_prior_to_last_end
+            result["compare_to_month_name"] = month_prior_to_last_name
+            result["comparison_valid"] = False  # Mark as invalid if a core date is missing
+
+        # The 'compare_to_previous_month' flag becomes less relevant with explicit month parsing
+        result["compare_to_previous_month"] = True  # Keep for now if downstream expects it
 
         return result
+
     except Exception as e:
         print(f"Error in LLM call for cost drop parsing: {e}")
         return {
             "segment": None,
+            "month_of_interest_name": last_month_name,
+            "compare_to_month_name": month_prior_to_last_name,
             "month_of_interest_start": last_month_start,
             "month_of_interest_end": last_month_end,
-            "compare_to_previous_month": True
+            "compare_to_month_start": month_prior_to_last_start,
+            "compare_to_month_end": month_prior_to_last_end,
+            "compare_to_previous_month": True,
+            "comparison_valid": False  # Mark as invalid on general error
         }
 
 def _get_quarter_dates(quarter_name: str) -> Optional[Tuple[datetime.date, datetime.date]]:

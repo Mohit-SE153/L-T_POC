@@ -276,22 +276,38 @@ def main():
                             )
             elif question_id == "question_2":
                 st.subheader("📉 Cost Drop Analysis")
-                result_df = run_question_2_logic(df, parsed_filters)
+                # Ensure parsed_filters includes month_of_interest_name and compare_to_month_name
+                # The 'parsed_filters' comes from parse_query_filters, but for question_2 specifically,
+                # we need the output of get_cost_drop_query_details which populates these.
+                # Assuming 'parsed_filters' already contains the output of get_cost_drop_query_details
+                # or that get_cost_drop_query_details is called to populate it.
+                # In your previous app.py, you had 'filters = get_cost_drop_query_details(user_query)'
+                # which would be the correct source for these specific month names.
+
+                # Let's use 'filters' as it was named in previous app.py snippet for clarity
+                # Make sure the 'filters' variable is populated correctly from get_cost_drop_query_details
+                # This line would typically be right before 'result_df = run_question_2_logic(...)':
+                filters = get_cost_drop_query_details(user_query)  # This call populates month_of_interest_name etc.
+
+                # Check if get_cost_drop_query_details returned a message (e.g., API error)
+                if filters.get("Message"):
+                    st.warning(filters["Message"])
+                    return  # Exit the function or handle appropriately
+
+                # Call the logic for question 2
+                result_df = run_question_2_logic(df, filters)  # Pass the filters dictionary here
+
                 if "Message" in result_df.columns:
                     st.warning(result_df["Message"].iloc[0])
                 else:
-                    month_of_interest_start = parsed_filters.get('month_of_interest_start')
-                    current_month_str = month_of_interest_start.strftime('%b %Y') if month_of_interest_start else 'N/A'
-                    prev_month_str = 'N/A'
-                    if month_of_interest_start:
-                        try:
-                            prev_month_date = month_of_interest_start.replace(day=1) - timedelta(days=1)
-                            prev_month_str = prev_month_date.strftime('%b %Y')
-                        except Exception as e:
-                            prev_month_str = 'N/A'
+                    # --- CRUCIAL CHANGE HERE ---
+                    # Use the names returned by get_cost_drop_query_details directly from the 'filters' dictionary.
+                    current_month_display_name = filters.get("month_of_interest_name", "N/A Month")
+                    compare_to_month_display_name = filters.get("compare_to_month_name", "N/A Month")
 
                     st.success(
-                        f"Analysis for Segment: '{parsed_filters.get('segment', 'All')}' for {current_month_str} vs {prev_month_str}")
+                        f"Analysis for Segment: '{filters.get('segment', 'All')}' for {current_month_display_name} vs {compare_to_month_display_name}")
+
                     st.write("Costs that increased (potentially triggered margin drop):")
                     st.dataframe(result_df, use_container_width=True)
             elif question_id == "question_3":
