@@ -84,7 +84,6 @@ def format_currency_dynamic(value):
 
 def display_kpi(col, label, value, delta_text=None, delta_color_class=""):
     with col:
-        # Removed the kpi-card div to eliminate the background box
         st.markdown(f"""
             <div class="kpi-label-top">{label}</div>
             <div class="kpi-value-bottom">{value}</div>
@@ -102,83 +101,83 @@ def main():
     elif "Message" in df.columns and df["Message"].iloc[0].startswith("Failed to load data from Azure Storage:"):
         st.stop()
 
-    # --- UPDATED CSS FOR THE DESIRED KPI LOOK ---
     st.markdown("""
     <style>
-    /* General body/container adjustments for consistent spacing */
-    body {
-        margin: 0;
-        padding: 0;
+    /* Global adjustments for the main content area */
+    .block-container {
+        padding-top: 3rem; /* Increased top padding to ensure title is not cropped */
+        padding-left: 1.2 rem;
+        padding-right: 1.2 rem;
+        padding-bottom: 1.2 rem;
+        max-width: unset; /* Ensure full width is used */
     }
 
-    /* Reduce top margin for all h2 tags if not first element */
+    /* Adjustments for h2 and other headers */
     h2 {
-        margin-top: 1rem !important; /* Adjust as needed */
+        margin-top: 1rem !important; /* Standardize top margin for h2 */
         margin-bottom: 0.5rem !important;
-        padding-top: 0 !important;
-        padding-bottom: 0 !important;
+        padding-top: 0.5 !important;
+        padding-bottom: 0.5 !important;
     }
 
-    /* Target specific Streamlit elements for better control */
-    div[data-testid="stVerticalBlock"] > h2 {
-        margin-top: 0rem !important; /* Keep the first H2 tight to the element above if desired */
-        margin-bottom: 0.5rem !important;
-        padding-top: 0 !important;
-        padding-bottom: 0 !important;
+    /* Specific adjustment for the very first h2 (often the Key Metrics title) */
+    /* This ensures it aligns with other content on the left */
+    div[data-testid="stVerticalBlock"] > h2:first-of-type {
+        margin-left: 0rem !important; /* Align with the left edge of the main content */
+        padding-left: 0rem !important;
     }
 
-    /* This targets the horizontal block likely containing the metrics. */
+    /* Target the horizontal block containing the metrics (st.columns) */
     div[data-testid="stVerticalBlock"] > div > div[data-testid="stHorizontalBlock"] {
-        margin-top: 0px !important; /* Ensure no negative margin pulling it up */
-        margin-bottom: 1rem !important; /* Add some space below the metrics */
-        /* To make column spacing like your desired image, use a bit of gap */
-        gap: 3rem; /* Adjust this value for more or less space between KPIs */
+        margin-top: 0.5 px !important;
+        margin-bottom: 1rem !important;
+        gap: 2 rem; /* Adjusted from 3rem to 1.5rem for tighter spacing between KPIs */
+        width: 100%; /* Ensure the columns container takes full available width */
+        /* Aligning the start of this block with other content */
+        justify-content: flex-start; /* Align items to the start of the container */
     }
 
-    /* KPI Styling - Removed background and centering */
-    /* These styles apply directly to the text elements now */
+    /* KPI Styling - No background, label on top, value on bottom */
+    /* Ensure these elements align left within their columns */
 
-    /* Label at the top */
     .kpi-label-top {
-        font-size: 1rem !important; /* Adjust font size to match desired */
-        color: #b0b3b8 !important; /* Streamlit's default text color for labels */
-        margin-bottom: 0.2rem; /* Small space between label and value */
-        text-align: left; /* Align label to left as in your example */
-        width: 100%; /* Ensure it takes full width of its column */
+        font-size: 1rem !important;
+        color: #b0b3b8 !important;
+        margin-bottom: 0.2rem;
+        text-align: left;
+        width: 100%; /* Ensure it takes full width of its column for alignment */
     }
 
-    /* Value at the bottom */
     .kpi-value-bottom {
-        font-size: 1.8rem !important; /* Adjust font size for main value */
+        font-size: 1.8rem !important;
         font-weight: bold !important;
-        color: #fff !important; /* White for the main value */
-        margin-bottom: 0.2rem; /* Small space if delta exists */
-        text-align: left; /* Align value to left */
-        width: 100%; /* Ensure it takes full width of its column */
+        color: #fff !important;
+        margin-bottom: 0.2rem;
+        text-align: left;
+        width: 100%; /* Ensure it takes full width of its column for alignment */
     }
 
-    /* Delta text (if present) */
     .kpi-delta-bottom {
-        font-size: 0.9rem !important; /* Adjust font size for delta */
-        text-align: left; /* Align delta to left */
-        width: 100%; /* Ensure it takes full width of its column */
+        font-size: 0.9rem !important;
+        text-align: left;
+        width: 100%; /* Ensure it takes full width of its column for alignment */
     }
 
     /* Delta colors (can be customized further) */
     .delta-green {
-        color: #00FF00 !important; /* Brighter green */
+        color: #00FF00 !important;
         font-weight: bold !important;
     }
     .delta-red {
-        color: #FF4B4B !important; /* Brighter red */
+        color: #FF4B4B !important;
         font-weight: bold !important;
     }
     .delta-yellow {
-        color: #FFD700 !important; /* Gold-like yellow */
+        color: #FFD700 !important;
         font-weight: bold !important;
     }
 
-    /* Hide Streamlit's default metric widget (already present) */
+    /* Hide Streamlit's default metric widget */
     .stMetric {
         display: none !important;
         visibility: hidden !important;
@@ -210,8 +209,7 @@ def main():
             result_df = pd.DataFrame()
             if "Message" in parsed_filters and parsed_filters["Message"].startswith("API keys for Azure OpenAI are not configured"):
                 st.error(parsed_filters["Message"])
-                st.stop() # Stop execution if fundamental API config is missing
-
+                st.stop()
             if question_id == "unknown":
                 st.warning("Sorry, I couldn't understand your question or it's not yet supported.")
                 st.info("Try queries like: 'List customers with CM > 50%' or 'What is M-o-M trend of C&B cost % w.r.t total revenue'...")
@@ -223,14 +221,12 @@ def main():
                     cm_threshold = parsed_filters.get("lower", 0.0) * 100 if parsed_filters.get("type") in [
                         "greater_than", "between", "equals"] and parsed_filters.get("lower") is not None else 0.0
 
-                    # Consolidated Date Filter Display
                     date_filter_msg = "📅 Showing all available data (no specific date filter applied from query)"
                     if parsed_filters.get("date_filter") and parsed_filters.get("start_date") and parsed_filters.get(
                             "end_date"):
                         date_filter_msg = f"📅 Date Filter: {parsed_filters['start_date'].strftime('%Y-%m-%d')} to {parsed_filters['end_date'].strftime('%Y-%m-%d')}"
                     st.success(date_filter_msg)
 
-                    # Consolidated CM Filter Display
                     cm_filter_msg = "🔍 Showing all Contribution Margins (no specific CM filter applied from query)"
                     if parsed_filters["type"] == "greater_than":
                         cm_filter_msg = f"🔍 Applying CM Filter: CM > {parsed_filters['lower'] * 100:.2f}%"
@@ -243,16 +239,14 @@ def main():
                     st.write(cm_filter_msg)
 
                     st.markdown("## 📊 Key Metrics", unsafe_allow_html=True)
-                    # Use a wider column distribution for KPIs if they are small, or keep 4
-                    col1, col2, col3, col4 = st.columns(4) # Keep 4 columns for now
+                    # Corrected order for display to match your image
+                    col1, col2, col3, col4 = st.columns(4)
                     total_customers = len(result_df)
-                    # For total_rev and total_cost, you need the numeric values from result_df
-                    # result_df currently has them as formatted strings like "$1,234.56"
-                    # You'll need to strip the '$' and ',' and convert to float before summing
                     total_rev = result_df['Revenue'].str.replace(r'[$,]', '', regex=True).astype(float).sum()
                     total_cost = result_df['Cost'].str.replace(r'[$,]', '', regex=True).astype(float).sum()
                     avg_cm = result_df['CM_Value'].replace([np.inf, -np.inf], np.nan).mean()
 
+                    # Re-ordered KPI display to match the image: Total Customers, Total Revenue, Total Cost, Average CM
                     display_kpi(col1, "Total Customers", total_customers)
                     display_kpi(col2, "Total Revenue", format_currency_dynamic(total_rev))
                     display_kpi(col3, "Total Cost", format_currency_dynamic(total_cost))
@@ -265,17 +259,15 @@ def main():
                                 cm_val = float(str(val).replace('%', ''))
                                 if cm_val > cm_threshold:
                                     return 'background-color: #d4edda; color: #155724;'
-                                elif cm_val > 30: # Assuming 30% is a reasonable yellow threshold
+                                elif cm_val > 30:
                                     return 'background-color: #fff3cd; color: #856404;'
                                 elif cm_val < 0:
                                     return 'background-color: #f8d7da; color: #721c24;'
                                 return ''
-                            except ValueError: # Catch cases where conversion to float fails
+                            except ValueError:
                                 return ''
 
-                        display_df = result_df.drop(columns=["CM_Value"]) # Drop CM_Value for display
-                        # Apply style with a safer way that handles potential NaN or non-numeric
-                        # Use apply rather than applymap for better column-wise control
+                        display_df = result_df.drop(columns=["CM_Value"])
                         styled_display_df = display_df.style.map(color_cm, subset=['CM (%)']).set_table_styles([
                             {'selector': 'th', 'props': [('background-color', '#f0f2f6'), ('font-weight', 'bold')]}
                         ])
