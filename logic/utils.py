@@ -651,6 +651,80 @@ def parse_query_filters(user_query: str, question_id: str) -> dict:
         return parse_cb_comparison_details(user_query)
     elif question_id == "question_4": # --- ADDED FOR QUESTION 4 ---
         return parse_cb_revenue_trend_details(user_query)
+    elif question_id == "question_5":
+        # This is a conceptual example, adapt based on how your OpenAI client
+        # is set up in logic/utils.py and how you want to extract dates/periods.
+        extraction_prompt = f"""
+            Extract the following information from the user query for revenue trend analysis:
+            - 'period_type': 'Year', 'Quarter', or 'Month' (based on YoY, QoQ, MoM). Default to 'Month' if not specified.
+            - 'start_date': (YYYY-MM-DD or the start date of the period mentioned, e.g., '2024-01-01' for Q1 2024 or Jan 2024. If 'last quarter', 'this quarter', 'last year', 'this year', calculate relative dates from current date {datetime.now().strftime('%Y-%m-%d')}). If no specific period is mentioned, infer a reasonable default (e.g., last 12 months, or start of data).
+            - 'end_date': (YYYY-MM-DD or the end date of the period). If not specified, infer end of the inferred period.
+            - 'grouping_dimension': 'DU', 'BU', 'Account', or 'All' (if not specified).
+            - 'specific_group': The exact name of the DU, BU, or Account if mentioned (e.g., 'CustA').
+
+            Return a JSON object with these keys. If a value cannot be extracted, set it to null.
+            User query: "{user_query}"
+            """
+
+        try:
+            response = client.chat.completions.create(
+                model=AZURE_OPENAI_DEPLOYMENT,  # Assuming AZURE_OPENAI_DEPLOYMENT is available
+                messages=[
+                    {"role": "system", "content": extraction_prompt},
+                    {"role": "user", "content": user_query}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0
+            )
+            extracted_info = json.loads(response.choices[0].message.content)
+
+            # Convert string dates to datetime objects and handle defaults/logic
+            start_date_str = extracted_info.get("start_date")
+            end_date_str = extracted_info.get("end_date")
+
+            parsed_start_date = None
+            if start_date_str:
+                try:
+                    parsed_start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+                except ValueError:
+                    # Handle cases like "last quarter", "this year" by calculating dates
+                    # This part would need more sophisticated date parsing logic.
+                    pass
+
+            parsed_end_date = None
+            if end_date_str:
+                try:
+                    parsed_end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+                except ValueError:
+                    pass
+
+            # If start_date/end_date are still None, set defaults (e.g., last 12 months)
+            if not parsed_start_date or not parsed_end_date:
+                # Example: Default to last 12 months from current date
+                current_date = datetime.now().date()
+                parsed_end_date = current_date.replace(day=1) - timedelta(days=1)  # End of last month
+                parsed_start_date = (parsed_end_date - timedelta(days=365)).replace(day=1)
+
+            return {
+                "date_filter": True,  # Indicate that a date filter attempt was made
+                "start_date": parsed_start_date,
+                "end_date": parsed_end_date,
+                "period_type": extracted_info.get("period_type"),  # 'Year', 'Quarter', 'Month'
+                "grouping_dimension": extracted_info.get("grouping_dimension", "All"),
+                "specific_group": extracted_info.get("specific_group")
+            }
+
+        except Exception as e:
+            print(f"Error in parse_query_filters for question_5: {e}")
+            return {
+                "date_filter": False,
+                "start_date": None,
+                "end_date": None,
+                "period_type": None,
+                "grouping_dimension": "All",  # Default to All if parsing fails
+                "specific_group": None,
+                "Message": f"Could not parse filters for Q5: {e}"
+            }
     else:
         return {
             "date_filter": False,

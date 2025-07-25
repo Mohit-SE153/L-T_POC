@@ -56,7 +56,7 @@ def get_question_id(user_input: str) -> str:
     system_prompt = """
     You are a routing engine that maps natural language questions to logic file identifiers.
     Each identifier corresponds to a question type.
-    Return ONLY the identifier, like 'question_1', 'question_2', 'question_3', 'question_4', or 'unknown'.
+    Return ONLY the identifier, like 'question_1', 'question_2', 'question_3', 'question_4', 'question_5', or 'unknown'.
 
     Available identifiers and examples:
     - question_1: Questions about customers with CM% thresholds and optional date filters, including listing customers, average CM, total revenue, and CM distribution.
@@ -90,6 +90,13 @@ def get_question_id(user_input: str) -> str:
         - "C&B cost to revenue trend over time"
         - "Analyze C&B cost percentage of revenue month over month"
         - "C&B as % of revenue trend for last 6 months"
+    - question_5: Questions about Year-over-Year (YoY), Quarter-over-Quarter (QoQ), or Month-over-Month (MoM) revenue trends, often segmented by DU, BU, or account.
+        Examples for question_5:
+        - "What is the YoY, QoQ, MoM revenue for DU/BU/account"
+        - "Show me the quarterly revenue trend by DU"
+        - "Give me the month over month revenue for specific accounts"
+        - "Analyze yearly revenue changes for all BUs"
+        - "What's the QoQ revenue for account 'XYZ'?"
 
     If the input doesn’t match any known type, return 'unknown'.
     """
@@ -107,4 +114,3 @@ def get_question_id(user_input: str) -> str:
     except Exception as e:
         print(f"Error in get_question_id API call: {e}")
         return "unknown"
-
